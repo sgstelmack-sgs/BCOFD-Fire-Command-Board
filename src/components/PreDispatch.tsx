@@ -1,41 +1,64 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { supabase } from "../supabaseClient";
+
+// Define types to satisfy TypeScript
+interface Incident {
+  id: string;
+  box: string;
+  address: string;
+  active: boolean;
+  callNotes?: string;
+}
+
+interface PreDispatchProps {
+  onStart: (notes: string) => void;
+  setIncident: (incident: Incident) => void;
+  setUnits: (units: any[]) => void;
+  setView: (view: string) => void;
+  runningIncidents: Incident[];
+}
 
 export default function PreDispatch({
   onStart,
-  incident,
-  runningIncidents = [],
-}: any) {
-  const [localNotes, setLocalNotes] = useState(incident.callNotes || "");
+  setIncident,
+  setUnits,
+  setView,
+}: PreDispatchProps) {
+  const [raw, setRaw] = useState("");
+  const [ongoing, setOngoing] = useState<any[]>([]);
+
+  // Fetch active incidents from Supabase
+  const fetchCalls = async () => {
+    const { data } = await supabase
+      .from("incidents")
+      .select("*")
+      .order("updated_at", { ascending: false })
+      .limit(5);
+    if (data) setOngoing(data);
+  };
+
+  useEffect(() => {
+    fetchCalls();
+  }, []);
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "1fr 450px", // Left is larger for the monitor
-        gap: "20px",
-        height: "calc(100vh - 100px)",
+        gridTemplateColumns: "1fr 450px",
+        gap: 20,
+        height: "85vh",
       }}
     >
-      {/* LEFT HALF: CODEMESSENGER MONITOR */}
+      {/* LEFT: LIVE CAD FEED */}
       <div
         style={{
-          background: "#000",
-          borderRadius: "8px",
+          background: "#1e293b",
+          borderRadius: 8,
           overflow: "hidden",
-          border: "2px solid #334155",
+          border: "1px solid #334155",
         }}
       >
-        <div
-          style={{
-            background: "#334155",
-            padding: "8px 12px",
-            fontSize: "11px",
-            color: "#fff",
-            fontWeight: "bold",
-          }}
-        >
-          STATION MONITOR (LIVE FEED)
-        </div>
         <iframe
           src="https://dev.codemessaging.net/rc/DF5Z4H3Z4VP.php"
           style={{
@@ -44,46 +67,51 @@ export default function PreDispatch({
             border: "none",
             background: "white",
           }}
+          title="CAD Monitor"
         />
       </div>
 
-      {/* RIGHT SIDE: TOOLS & HISTORY */}
-      <div
-        style={{ display: "grid", gridTemplateRows: "1fr 2fr", gap: "20px" }}
-      >
-        {/* TOP RIGHT: PASTE & START (Approx 1/3 height) */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          <label
-            style={{ color: "#94a3b8", fontSize: "11px", fontWeight: "bold" }}
-          >
-            PASTE DISPATCH NARRATIVE:
-          </label>
+      {/* RIGHT: CONTROLS */}
+      <aside style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {/* QUICK LAUNCH SECTION */}
+        <div
+          style={{
+            background: "#1e293b",
+            padding: 20,
+            borderRadius: 8,
+            border: "1px solid #f97316",
+          }}
+        >
+          <h3 style={{ color: "#f97316", marginTop: 0, fontSize: "14px" }}>
+            QUICK LAUNCH
+          </h3>
           <textarea
-            value={localNotes}
-            onChange={(e) => setLocalNotes(e.target.value)}
-            placeholder="Paste CAD data..."
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            placeholder="Paste BOX: ADDR: UNIT:..."
             style={{
-              flex: 1,
+              width: "100%",
+              height: 120,
               background: "#0f172a",
-              color: "#fff",
-              border: "1px solid #334155",
-              borderRadius: "6px",
-              padding: "10px",
-              fontSize: "14px",
+              color: "#4ade80",
+              padding: 10,
+              borderRadius: 4,
               fontFamily: "monospace",
-              resize: "none",
+              border: "1px solid #334155",
+              fontSize: "12px",
             }}
           />
           <button
-            onClick={() => onStart(localNotes)}
+            onClick={() => onStart(raw)}
             style={{
-              background: "#22c55e",
-              color: "black",
+              width: "100%",
+              background: "#f97316",
+              padding: 12,
               border: "none",
-              padding: "12px",
-              borderRadius: "6px",
+              color: "white",
               fontWeight: "bold",
-              fontSize: "16px",
+              marginTop: 10,
+              borderRadius: 4,
               cursor: "pointer",
             }}
           >
@@ -91,65 +119,98 @@ export default function PreDispatch({
           </button>
         </div>
 
-        {/* BOTTOM RIGHT: RUNNING INCIDENTS */}
+        {/* ONGOING CALLS SECTION */}
         <div
           style={{
             background: "#1e293b",
-            borderRadius: "8px",
-            padding: "15px",
-            border: "1px solid #334155",
+            padding: 20,
+            borderRadius: 8,
+            flex: 1,
             overflowY: "auto",
+            border: "1px solid #334155",
           }}
         >
-          <h3
+          <div
             style={{
-              marginTop: 0,
-              fontSize: "14px",
-              color: "#facc15",
-              borderBottom: "1px solid #334155",
-              paddingBottom: "10px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 15,
             }}
           >
-            RUNNING INCIDENTS
-          </h3>
-          {runningIncidents.length === 0 ? (
-            <p
+            <h3 style={{ color: "#38bdf8", margin: 0, fontSize: "14px" }}>
+              ONGOING CALLS
+            </h3>
+            <button
+              onClick={fetchCalls}
               style={{
-                color: "#475569",
-                fontSize: "12px",
-                textAlign: "center",
-                marginTop: "20px",
+                background: "none",
+                border: "none",
+                color: "#38bdf8",
+                cursor: "pointer",
               }}
             >
-              No active calls in progress.
-            </p>
-          ) : (
+              ↻ Refresh
+            </button>
+          </div>
+
+          {ongoing.map((inc: any) => (
             <div
-              style={{ display: "flex", flexDirection: "column", gap: "10px" }}
+              key={inc.id}
+              style={{
+                background: "#0f172a",
+                padding: 15,
+                marginBottom: 10,
+                borderLeft: "6px solid #38bdf8",
+                borderRadius: 4,
+              }}
             >
-              {runningIncidents.map((inc: any, idx: number) => (
-                <div
-                  key={idx}
-                  style={{
-                    background: "#0f172a",
-                    padding: "10px",
-                    borderRadius: "4px",
-                    borderLeft: "4px solid #22c55e",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ fontWeight: "bold", fontSize: "13px" }}>
-                    {inc.box}
-                  </div>
-                  <div style={{ fontSize: "11px", color: "#94a3b8" }}>
-                    {inc.address}
-                  </div>
-                </div>
-              ))}
+              <div style={{ fontWeight: "bold", color: "white" }}>
+                BOX {inc.state?.incident?.box || "---"}
+              </div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+                {inc.state?.incident?.address || "No Address Found"}
+              </div>
+
+              <button
+                onClick={() => {
+                  // These functions must match the props passed in App.tsx
+                  setIncident(inc.state.incident);
+                  setUnits(inc.state.units || []);
+                  setView("dispatch");
+                }}
+                style={{
+                  width: "100%",
+                  marginTop: 10,
+                  background: "#38bdf8",
+                  color: "black",
+                  fontWeight: "bold",
+                  padding: 8,
+                  border: "none",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  fontSize: "12px",
+                }}
+              >
+                JOIN INCIDENT
+              </button>
+            </div>
+          ))}
+
+          {ongoing.length === 0 && (
+            <div
+              style={{
+                textAlign: "center",
+                color: "#475569",
+                marginTop: 20,
+                fontSize: "12px",
+              }}
+            >
+              No active incidents found in database.
             </div>
           )}
         </div>
-      </div>
+      </aside>
     </div>
   );
 }
