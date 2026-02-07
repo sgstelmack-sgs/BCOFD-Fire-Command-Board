@@ -9,11 +9,22 @@ export default function Dispatch({
   createUnitInstance,
 }: any) {
   const [manual, setManual] = useState("");
-  const fallbackMap = `https://maps.google.com/maps?q=${encodeURIComponent(
-    incident.address
-  )}&t=k&z=19&ie=UTF8&iwloc=&output=embed`;
+  const [expanded, setExpanded] = useState<string[]>([]);
 
-  // Status Toggles
+  const mapUrl = `https://maps.google.com/maps?q=${encodeURIComponent(
+    incident.address
+  )}&t=k&z=19&output=embed`;
+
+  const isExpanded = (id: string) => expanded.indexOf(id) !== -1;
+
+  const toggleExpand = (id: string) => {
+    if (isExpanded(id)) {
+      setExpanded(expanded.filter((i) => i !== id));
+    } else {
+      setExpanded([...expanded, id]);
+    }
+  };
+
   const setStatus = (uid: string, newStatus: string) => {
     const next = units.map((u: FireUnit) =>
       u.id === uid ? { ...u, status: newStatus } : u
@@ -22,16 +33,12 @@ export default function Dispatch({
     syncState({ units: next, incident });
   };
 
-  const updateMemberName = (
-    unitId: string,
-    memberIdx: number,
-    name: string
-  ) => {
+  const updateMember = (unitId: string, idx: number, name: string) => {
     const next = units.map((u: FireUnit) => {
       if (u.id === unitId) {
-        const newMembers = [...u.members];
-        newMembers[memberIdx] = { ...newMembers[memberIdx], name };
-        return { ...u, members: newMembers };
+        const m = [...u.members];
+        m[idx].name = name;
+        return { ...u, members: m };
       }
       return u;
     });
@@ -39,12 +46,11 @@ export default function Dispatch({
     syncState({ units: next, incident });
   };
 
-  const addUnit = () => {
-    if (!manual) return;
-    const next = [...units, createUnitInstance(manual)];
-    setUnits(next);
-    syncState({ units: next, incident });
-    setManual("");
+  const getTypeIndex = (unit: FireUnit) => {
+    const sameType = units.filter(
+      (u: FireUnit) => u.type === unit.type && u.status !== "dispatched"
+    );
+    return sameType.findIndex((u: FireUnit) => u.id === unit.id) + 1;
   };
 
   return (
@@ -56,7 +62,6 @@ export default function Dispatch({
         background: "#060b13",
       }}
     >
-      {/* LEFT: HEADER & MAP */}
       <div
         style={{
           display: "flex",
@@ -71,41 +76,69 @@ export default function Dispatch({
             borderBottom: "2px solid #1e293b",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-            }}
-          >
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
             <div>
               <div
                 style={{
                   color: "#f97316",
                   fontWeight: "bold",
-                  fontSize: "20px",
+                  fontSize: "18px",
                 }}
               >
                 BOX {incident.box}
               </div>
               <div
-                style={{ color: "white", fontSize: "24px", fontWeight: "bold" }}
+                style={{ color: "white", fontSize: "22px", fontWeight: "bold" }}
               >
                 {incident.address}
               </div>
             </div>
+            <div
+              style={{ textAlign: "right", color: "#64748b", fontSize: "11px" }}
+            >
+              ID: <span style={{ color: "white" }}>{incident.id}</span>
+            </div>
           </div>
-          <div
-            style={{
-              marginTop: "12px",
-              border: "1px solid #1e293b",
-              padding: "8px 12px",
-              background: "#020617",
-              color: "#4ade80",
-              fontWeight: "bold",
-            }}
-          >
-            {incident.callNotes?.split("INFO:")[1] || "WORKING FIRE"}
+          <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
+            <div
+              style={{
+                flex: 1,
+                border: "1px solid #1e293b",
+                padding: "8px",
+                background: "#020617",
+              }}
+            >
+              <span
+                style={{
+                  color: "#22c55e",
+                  fontWeight: "bold",
+                  fontSize: "9px",
+                }}
+              >
+                NARRATIVE:
+              </span>
+              <div
+                style={{
+                  color: "#4ade80",
+                  fontSize: "13px",
+                  fontWeight: "bold",
+                }}
+              >
+                {incident.narrative}
+              </div>
+            </div>
+            <div
+              style={{
+                width: "180px",
+                border: "1px solid #1e293b",
+                padding: "8px",
+                background: "#020617",
+                fontSize: "11px",
+                color: "white",
+              }}
+            >
+              {incident.date} | {incident.time}
+            </div>
           </div>
         </div>
         <div style={{ flex: 1 }}>
@@ -113,21 +146,14 @@ export default function Dispatch({
             width="100%"
             height="100%"
             frameBorder="0"
-            src={fallbackMap}
-            style={{ filter: "brightness(0.7) contrast(1.2)" }}
+            src={mapUrl}
+            style={{ filter: "brightness(0.7) contrast(1.2)", border: "none" }}
           />
         </div>
       </div>
 
-      {/* RIGHT: APPARATUS SIDEBAR */}
       <aside
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          background: "#020617",
-          padding: "12px",
-          overflowY: "auto",
-        }}
+        style={{ background: "#020617", padding: "12px", overflowY: "auto" }}
       >
         <div style={{ display: "flex", gap: "5px", marginBottom: "15px" }}>
           <input
@@ -144,7 +170,10 @@ export default function Dispatch({
             }}
           />
           <button
-            onClick={addUnit}
+            onClick={() => {
+              if (manual) setUnits([...units, createUnitInstance(manual)]);
+              setManual("");
+            }}
             style={{
               background: "#22c55e",
               border: "none",
@@ -157,29 +186,39 @@ export default function Dispatch({
           </button>
         </div>
 
-        {/* EN ROUTE / GHOSTED SECTION */}
+        <div
+          style={{
+            fontSize: "11px",
+            color: "#facc15",
+            fontWeight: "bold",
+            marginBottom: "10px",
+            textTransform: "uppercase",
+          }}
+        >
+          Units En Route
+        </div>
+        {/* ONLY SHOW EN ROUTE UNITS HERE */}
         {units
-          .filter(
-            (u: FireUnit) => u.status === "dispatched" || u.status === "enroute"
-          )
-          .map((u: FireUnit, index: number) => (
+          .filter((u: FireUnit) => u.status === "enroute")
+          .map((u: FireUnit) => (
             <div
               key={u.id}
               style={{
                 background: "#111827",
-                marginBottom: "12px",
+                marginBottom: "8px",
                 border: "1px solid #1e293b",
                 borderRadius: "3px",
-                opacity: u.status === "dispatched" ? 0.5 : 1, // Ghosted effect
               }}
             >
               <div
+                onClick={() => toggleExpand(u.id)}
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
                   background: "#1e293b",
-                  padding: "6px 12px",
+                  padding: "8px 12px",
                   alignItems: "center",
+                  cursor: "pointer",
                 }}
               >
                 <div
@@ -187,7 +226,7 @@ export default function Dispatch({
                 >
                   <span
                     style={{
-                      background: "#f97316",
+                      background: u.type === "ENGINE" ? "#ef4444" : "#22c55e",
                       color: "white",
                       borderRadius: "50%",
                       width: "18px",
@@ -199,141 +238,140 @@ export default function Dispatch({
                       fontWeight: "bold",
                     }}
                   >
-                    {index + 1}
+                    {getTypeIndex(u)}
                   </span>
                   <span
                     style={{
                       fontWeight: "bold",
                       color: "white",
-                      fontSize: "18px",
+                      fontSize: "16px",
                     }}
                   >
                     {u.id}
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: "5px" }}>
-                  {u.status === "dispatched" && (
-                    <button
-                      onClick={() => setStatus(u.id, "enroute")}
-                      style={{
-                        background: "#facc15",
-                        color: "black",
-                        border: "none",
-                        padding: "4px 8px",
-                        borderRadius: "2px",
-                        fontWeight: "bold",
-                        fontSize: "10px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      EN ROUTE
-                    </button>
-                  )}
                   <button
-                    onClick={() => setStatus(u.id, "arrived")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStatus(u.id, "arrived");
+                    }}
                     style={{
                       background: "#22c55e",
                       color: "black",
                       border: "none",
-                      padding: "4px 8px",
+                      padding: "4px 10px",
                       borderRadius: "2px",
                       fontWeight: "bold",
                       fontSize: "10px",
-                      cursor: "pointer",
                     }}
                   >
                     ARRIVE
                   </button>
+                  <span style={{ color: "#475569", fontSize: "10px" }}>
+                    {isExpanded(u.id) ? "▲" : "▼"}
+                  </span>
                 </div>
               </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "4px",
-                  padding: "8px",
-                }}
-              >
-                {u.members.map((m: Member, idx: number) => (
-                  <div
-                    key={idx}
-                    style={{
-                      background: "#060b13",
-                      padding: "5px 8px",
-                      border: "1px solid #1f2937",
-                      height: "45px",
-                    }}
-                  >
+              {isExpanded(u.id) && (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "4px",
+                    padding: "8px",
+                  }}
+                >
+                  {u.members.map((m: Member, idx: number) => (
                     <div
+                      key={idx}
                       style={{
-                        fontSize: "8px",
-                        color: "#475569",
-                        textTransform: "uppercase",
+                        background: "#060b13",
+                        padding: "5px 8px",
+                        border: "1px solid #1f2937",
+                        height: "40px",
                       }}
                     >
-                      {m.role}
+                      <div
+                        style={{
+                          fontSize: "8px",
+                          color: "#475569",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {m.role}
+                      </div>
+                      <input
+                        value={m.name}
+                        onChange={(e) =>
+                          updateMember(u.id, idx, e.target.value)
+                        }
+                        placeholder="..."
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#94a3b8",
+                          fontWeight: "bold",
+                          fontSize: "11px",
+                          width: "100%",
+                        }}
+                      />
                     </div>
-                    <input
-                      value={m.name}
-                      onChange={(e) =>
-                        updateMemberName(u.id, idx, e.target.value)
-                      }
-                      placeholder="..."
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: "#94a3b8",
-                        fontWeight: "bold",
-                        fontSize: "12px",
-                        width: "100%",
-                        outline: "none",
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
 
-        {/* ON SCENE SECTION */}
-        <div
-          style={{
-            borderTop: "2px solid #1e293b",
-            marginTop: "10px",
-            paddingTop: "15px",
-          }}
-        >
+        <div style={{ marginTop: "20px" }}>
           <div
             style={{
-              fontSize: "10px",
-              color: "#22c55e",
+              fontSize: "11px",
+              color: "#94a3b8",
               fontWeight: "bold",
               marginBottom: "10px",
-              textAlign: "center",
+              textTransform: "uppercase",
             }}
           >
-            ON SCENE
+            Inactive / Ghosted Units
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-            {units
-              .filter((u: FireUnit) => u.status === "arrived")
-              .map((u: FireUnit) => (
-                <div
-                  key={u.id}
+          {units
+            .filter((u: FireUnit) => u.status === "dispatched")
+            .map((u: FireUnit) => (
+              <div
+                key={u.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  background: "#0f172a",
+                  border: "1px dashed #334155",
+                  padding: "10px 15px",
+                  borderRadius: "4px",
+                  marginBottom: "5px",
+                }}
+              >
+                <span style={{ color: "#94a3b8", fontWeight: "bold" }}>
+                  G{u.id}
+                </span>
+                <button
+                  onClick={() => setStatus(u.id, "enroute")}
                   style={{
-                    padding: "10px 15px",
-                    background: "#0f172a",
-                    borderLeft: "4px solid #22c55e",
-                    fontWeight: "bold",
-                    fontSize: "15px",
+                    background: "#334155",
                     color: "white",
+                    border: "none",
+                    padding: "4px 12px",
+                    borderRadius: "3px",
+                    fontSize: "10px",
+                    fontWeight: "bold",
+                    cursor: "pointer",
                   }}
                 >
-                  {u.id}
-                </div>
-              ))}
-          </div>
+                  ACTIVATE
+                </button>
+              </div>
+            ))}
         </div>
       </aside>
     </div>

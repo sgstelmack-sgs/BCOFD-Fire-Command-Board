@@ -1,33 +1,12 @@
-import React from "react";
-
-// --- TYPES TO MATCH APP.TSX ---
-interface Member {
-  role: string;
-  name: string;
-  assignment: string;
-}
-
-interface FireUnit {
-  id: string;
-  status: string;
-  type: string;
-  assignment: string;
-  members: Member[];
-}
-
-interface CommandBoardProps {
-  incident: any;
-  units: FireUnit[];
-  setUnits: (units: FireUnit[]) => void;
-  syncState: (payload: any) => void;
-}
+import React, { useState } from "react";
+import { FireUnit, Member } from "../App";
 
 export default function CommandBoard({
   incident,
   units,
   setUnits,
   syncState,
-}: CommandBoardProps) {
+}: any) {
   const sectors = [
     "Division 1",
     "Division 2",
@@ -36,11 +15,22 @@ export default function CommandBoard({
     "Exp 2",
     "Exp 4",
   ];
+  const [expanded, setExpanded] = useState<string[]>([]);
 
-  // Explicitly tell TypeScript 'u' is a FireUnit
+  // ONLY arrived units that aren't assigned a sector yet appear in Staging
   const staging = units.filter(
     (u: FireUnit) => u.status === "arrived" && !u.assignment
   );
+
+  const isExpanded = (id: string) => expanded.indexOf(id) !== -1;
+
+  const toggleExpand = (id: string) => {
+    if (isExpanded(id)) {
+      setExpanded(expanded.filter((i) => i !== id));
+    } else {
+      setExpanded([...expanded, id]);
+    }
+  };
 
   const moveUnit = (uid: string, sector: string) => {
     const next = units.map((u: FireUnit) =>
@@ -69,7 +59,9 @@ export default function CommandBoard({
         display: "grid",
         gridTemplateColumns: "300px 1fr 250px",
         gap: 20,
-        height: "85vh",
+        height: "calc(100vh - 45px)",
+        background: "#060b13",
+        padding: "10px",
       }}
     >
       {/* STAGING */}
@@ -81,7 +73,13 @@ export default function CommandBoard({
           overflowY: "auto",
         }}
       >
-        <h3 style={{ color: "#f97316", borderBottom: "2px solid #f97316" }}>
+        <h3
+          style={{
+            color: "#f97316",
+            borderBottom: "2px solid #f97316",
+            marginTop: 0,
+          }}
+        >
           STAGING
         </h3>
         {staging.map((u: FireUnit) => (
@@ -95,42 +93,49 @@ export default function CommandBoard({
             }}
           >
             <div
+              onClick={() => toggleExpand(u.id)}
               style={{
                 display: "flex",
                 justifyContent: "space-between",
                 marginBottom: 10,
+                cursor: "pointer",
               }}
             >
-              <strong>{u.id}</strong>
+              <strong style={{ color: "white" }}>{u.id}</strong>
               <select
                 onChange={(e) => moveUnit(u.id, e.target.value)}
-                style={{ background: "#334155", color: "white" }}
+                style={{
+                  background: "#334155",
+                  color: "white",
+                  fontSize: "10px",
+                }}
               >
                 <option value="">Assign...</option>
-                {sectors.map((s: string) => (
+                {sectors.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>
                 ))}
               </select>
             </div>
-            {u.members.map((m: Member, idx: number) => (
-              <input
-                key={idx}
-                value={m.name}
-                onChange={(e) => updateMember(u.id, idx, e.target.value)}
-                placeholder={m.role}
-                style={{
-                  width: "100%",
-                  background: "transparent",
-                  border: "none",
-                  borderBottom: "1px solid #334155",
-                  color: "white",
-                  fontSize: 11,
-                  marginBottom: 4,
-                }}
-              />
-            ))}
+            {isExpanded(u.id) &&
+              u.members.map((m: Member, idx: number) => (
+                <input
+                  key={idx}
+                  value={m.name}
+                  onChange={(e) => updateMember(u.id, idx, e.target.value)}
+                  placeholder={m.role}
+                  style={{
+                    width: "100%",
+                    background: "transparent",
+                    border: "none",
+                    borderBottom: "1px solid #334155",
+                    color: "white",
+                    fontSize: 11,
+                    marginBottom: 4,
+                  }}
+                />
+              ))}
           </div>
         ))}
       </aside>
@@ -143,7 +148,7 @@ export default function CommandBoard({
           gap: 10,
         }}
       >
-        {sectors.map((s: string) => (
+        {sectors.map((s) => (
           <div
             key={s}
             style={{
@@ -176,22 +181,27 @@ export default function CommandBoard({
                     borderLeft: "4px solid #38bdf8",
                   }}
                 >
-                  <strong style={{ fontSize: 14 }}>{u.id}</strong>
-                  <button
-                    onClick={() => moveUnit(u.id, "")}
-                    style={{
-                      float: "right",
-                      background: "none",
-                      border: "none",
-                      color: "#94a3b8",
-                      cursor: "pointer",
-                    }}
+                  <div
+                    style={{ display: "flex", justifyContent: "space-between" }}
                   >
-                    ×
-                  </button>
-                  <div style={{ fontSize: 10, color: "#94a3b8" }}>
+                    <strong style={{ fontSize: 14, color: "white" }}>
+                      {u.id}
+                    </strong>
+                    <button
+                      onClick={() => moveUnit(u.id, "")}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#94a3b8",
+                        cursor: "pointer",
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>
                     {u.members
-                      .map((m: Member) => m.name || m.role.split(" ")[0])
+                      .map((m) => m.name || m.role.split(" ")[0])
                       .join(", ")}
                   </div>
                 </div>
@@ -202,14 +212,23 @@ export default function CommandBoard({
 
       {/* BENCHMARKS */}
       <aside style={{ background: "#1e293b", padding: 15, borderRadius: 8 }}>
-        <h3 style={{ color: "#22c55e" }}>BENCHMARKS</h3>
+        <h3 style={{ color: "#22c55e", marginTop: 0 }}>BENCHMARKS</h3>
         {[
           "Primary Search",
           "Secondary Search",
           "Fire Controlled",
           "Utilities",
-        ].map((b: string) => (
-          <div key={b} style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+        ].map((b) => (
+          <div
+            key={b}
+            style={{
+              display: "flex",
+              gap: 10,
+              marginBottom: 10,
+              color: "white",
+              fontSize: "13px",
+            }}
+          >
             <input type="checkbox" /> {b}
           </div>
         ))}

@@ -1,44 +1,48 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
 
-// Define types to satisfy TypeScript
-interface Incident {
-  id: string;
-  box: string;
-  address: string;
-  active: boolean;
-  callNotes?: string;
-}
-
+// 1. Define the rules for the data being passed in
 interface PreDispatchProps {
   onStart: (notes: string) => void;
-  setIncident: (incident: Incident) => void;
+  setIncident: (incident: any) => void;
   setUnits: (units: any[]) => void;
   setView: (view: string) => void;
-  runningIncidents: Incident[];
+  runningIncidents: any[];
 }
 
+// 2. The "export default" makes this file a module
 export default function PreDispatch({
   onStart,
   setIncident,
   setUnits,
   setView,
+  runningIncidents,
 }: PreDispatchProps) {
   const [raw, setRaw] = useState("");
   const [ongoing, setOngoing] = useState<any[]>([]);
 
-  // Fetch active incidents from Supabase
   const fetchCalls = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("incidents")
       .select("*")
       .order("updated_at", { ascending: false })
-      .limit(5);
-    if (data) setOngoing(data);
+      .limit(10);
+
+    if (error) console.error("Fetch Error:", error);
+
+    if (data) {
+      // Filter locally for active calls to ensure reliability
+      const activeCalls = data.filter(
+        (inc) => inc.state?.incident?.active === true
+      );
+      setOngoing(activeCalls);
+    }
   };
 
   useEffect(() => {
     fetchCalls();
+    const interval = setInterval(fetchCalls, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -48,32 +52,25 @@ export default function PreDispatch({
         gridTemplateColumns: "1fr 450px",
         gap: 20,
         height: "85vh",
+        background: "#060b13",
+        padding: "10px",
       }}
     >
       {/* LEFT: LIVE CAD FEED */}
-      <div
+      <iframe
+        src="https://dev.codemessaging.net/rc/DF5Z4H3Z4VP.php"
         style={{
-          background: "#1e293b",
+          width: "100%",
+          height: "100%",
           borderRadius: 8,
-          overflow: "hidden",
           border: "1px solid #334155",
+          background: "white",
         }}
-      >
-        <iframe
-          src="https://dev.codemessaging.net/rc/DF5Z4H3Z4VP.php"
-          style={{
-            width: "100%",
-            height: "100%",
-            border: "none",
-            background: "white",
-          }}
-          title="CAD Monitor"
-        />
-      </div>
+        title="CAD Monitor"
+      />
 
       {/* RIGHT: CONTROLS */}
       <aside style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        {/* QUICK LAUNCH SECTION */}
         <div
           style={{
             background: "#1e293b",
@@ -82,9 +79,7 @@ export default function PreDispatch({
             border: "1px solid #f97316",
           }}
         >
-          <h3 style={{ color: "#f97316", marginTop: 0, fontSize: "14px" }}>
-            QUICK LAUNCH
-          </h3>
+          <h3 style={{ color: "#f97316", marginTop: 0 }}>QUICK LAUNCH</h3>
           <textarea
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
@@ -98,11 +93,13 @@ export default function PreDispatch({
               borderRadius: 4,
               fontFamily: "monospace",
               border: "1px solid #334155",
-              fontSize: "12px",
             }}
           />
           <button
-            onClick={() => onStart(raw)}
+            onClick={() => {
+              onStart(raw);
+              setRaw("");
+            }}
             style={{
               width: "100%",
               background: "#f97316",
@@ -119,7 +116,6 @@ export default function PreDispatch({
           </button>
         </div>
 
-        {/* ONGOING CALLS SECTION */}
         <div
           style={{
             background: "#1e293b",
@@ -135,26 +131,27 @@ export default function PreDispatch({
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              marginBottom: 15,
+              marginBottom: "15px",
             }}
           >
-            <h3 style={{ color: "#38bdf8", margin: 0, fontSize: "14px" }}>
-              ONGOING CALLS
-            </h3>
+            <h3 style={{ color: "#38bdf8", margin: 0 }}>ONGOING CALLS</h3>
             <button
               onClick={fetchCalls}
               style={{
-                background: "none",
+                background: "#334155",
+                color: "white",
                 border: "none",
-                color: "#38bdf8",
+                padding: "5px 10px",
+                borderRadius: 4,
                 cursor: "pointer",
+                fontSize: "10px",
               }}
             >
-              ↻ Refresh
+              REFRESH
             </button>
           </div>
 
-          {ongoing.map((inc: any) => (
+          {ongoing.map((inc) => (
             <div
               key={inc.id}
               style={{
@@ -165,16 +162,19 @@ export default function PreDispatch({
                 borderRadius: 4,
               }}
             >
-              <div style={{ fontWeight: "bold", color: "white" }}>
-                BOX {inc.state?.incident?.box || "---"}
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <strong style={{ color: "white" }}>
+                  BOX {inc.state?.incident?.box}
+                </strong>
+                <span style={{ fontSize: "10px", color: "#64748b" }}>
+                  {inc.id}
+                </span>
               </div>
-              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
-                {inc.state?.incident?.address || "No Address Found"}
+              <div style={{ fontSize: 12, color: "#94a3b8", margin: "5px 0" }}>
+                {inc.state?.incident?.address}
               </div>
-
               <button
                 onClick={() => {
-                  // These functions must match the props passed in App.tsx
                   setIncident(inc.state.incident);
                   setUnits(inc.state.units || []);
                   setView("dispatch");
@@ -189,26 +189,12 @@ export default function PreDispatch({
                   border: "none",
                   borderRadius: 4,
                   cursor: "pointer",
-                  fontSize: "12px",
                 }}
               >
                 JOIN INCIDENT
               </button>
             </div>
           ))}
-
-          {ongoing.length === 0 && (
-            <div
-              style={{
-                textAlign: "center",
-                color: "#475569",
-                marginTop: 20,
-                fontSize: "12px",
-              }}
-            >
-              No active incidents found in database.
-            </div>
-          )}
         </div>
       </aside>
     </div>
