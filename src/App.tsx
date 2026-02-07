@@ -5,7 +5,6 @@ import Dispatch from "./components/Dispatch";
 import CommandBoard from "./components/CommandBoard";
 import Roster from "./components/Roster";
 
-// --- GLOBAL INTERFACES ---
 export interface Member {
   role: string;
   name: string;
@@ -16,7 +15,10 @@ export interface FireUnit {
   status: string;
   type: string;
   assignment: string;
+  task?: string;
   members: Member[];
+  battalion?: string;
+  station?: string;
 }
 export interface Incident {
   id: string;
@@ -27,6 +29,7 @@ export interface Incident {
   narrative?: string;
   date?: string;
   time?: string;
+  benchmarks?: { [key: string]: string };
 }
 
 export default function App() {
@@ -49,9 +52,12 @@ export default function App() {
         },
         (payload: any) => {
           if (payload.new.state) {
-            setUnits(payload.new.state.units || []);
-            if (payload.new.state.incident)
-              setIncident(payload.new.state.incident);
+            const newState =
+              typeof payload.new.state === "string"
+                ? JSON.parse(payload.new.state)
+                : payload.new.state;
+            setUnits(newState.units || []);
+            if (newState.incident) setIncident(newState.incident);
           }
         }
       )
@@ -61,7 +67,6 @@ export default function App() {
     };
   }, [incident?.id]);
 
-  // --- UNIT BUILDER WITH DATABASE ROSTER LOOKUP ---
   const createUnitInstance = async (unitId: string): Promise<FireUnit> => {
     let rawId = unitId.toUpperCase().replace(/\s+/g, "");
     let status = "enroute";
@@ -69,197 +74,130 @@ export default function App() {
       status = "dispatched";
       rawId = rawId.substring(1);
     }
-
     const isEngine = rawId.includes("E") || rawId.includes("ENG");
 
-    // Fetch staffing from the 'apparatus' table
-    const { data: rosterData } = await supabase
+    // 1. Get Station/Battalion from 'apparatus' table
+    const { data: appData } = await supabase
       .from("apparatus")
-      .select("roles")
+      .select("battalion, station")
       .eq("id", rawId)
-      .single();
+      .maybeSingle();
 
-    let members: Member[] = [];
-    if (rosterData && rosterData.roles) {
-      members = rosterData.roles.map((r: any) => ({
-        role: r.role,
-        name: r.name || "",
-        assignment: "Unassigned",
-      }));
-    } else {
-      const roles = isEngine
-        ? ["Officer (P1)", "Driver (P4)", "Nozzle (P3)", "Backup (P2)"]
-        : ["Officer (P1)", "Driver (P4)", "Search (P2)", "OV (P3)"];
-      members = roles.map((r) => ({
-        role: r,
-        name: "",
-        assignment: "Unassigned",
-      }));
-    }
+    // 2. Get Crew from 'rosters' table
+    const { data: rosterData } = await supabase
+      .from("rosters")
+      .select("members")
+      .eq("id", rawId)
+      .maybeSingle();
 
     return {
       id: rawId,
       status,
       type: isEngine ? "ENGINE" : "TRUCK",
       assignment: "",
-      members,
+      battalion: appData?.battalion || "UNK",
+      station: appData?.station || "UNK",
+      members: rosterData?.members
+        ? rosterData.members.map((m: any) => ({
+            role: m.role,
+            name: m.name || "",
+            assignment: "Unassigned",
+          }))
+        : [
+            { role: "Officer", name: "", assignment: "Unassigned" },
+            { role: "Driver", name: "", assignment: "Unassigned" },
+          ],
     };
   };
 
-  // --- INCIDENT PARSER & STARTER ---
   const handleStartIncident = async (notes: string) => {
     if (!notes) return;
-
-    // 1. Define Regex Matches
     const idMatch = notes.match(/ID:\s*([A-Z0-9-]+)/i);
     const boxMatch = notes.match(/BOX:\s*([\d-]+)/i);
     const addrMatch = notes.match(/ADDR:\s*(.*?)\sUNIT:/i);
-    const unitMatch = notes.match(/UNIT:\s*(.*?)\s(?:INFO|STA|DATE)/i); // This creates the raw unit string
-    const narrativeMatch = notes.match(/INFO:\s*(.*?)\sDATE:/i);
-    const dateMatch = notes.match(/DATE:\s*([\d-]+)/i);
-    const timeMatch = notes.match(/TIME:\s*([\d:]+)/i);
+    const unitMatch = notes.match(/UNIT:\s*(.*?)\s(?:INFO|STA|DATE)/i);
 
-    // 2. Extract Data
     const incidentId = idMatch ? idMatch[1] : `INC-${Date.now()}`;
-    const box = boxMatch ? boxMatch[1] : "---";
-    const address = addrMatch ? addrMatch[1].trim() : "Address Found";
-
-    // 3. Process Units (Handle unitRaw context)
-    const rawUnitString = unitMatch ? unitMatch[1].trim() : "";
-    const unitList = rawUnitString.split(/\s+/).filter((id) => id);
-
-    // Await all database roster lookups
+    const unitList = unitMatch
+      ? unitMatch[1]
+          .trim()
+          .split(/\s+/)
+          .filter((id) => id)
+      : [];
     const initialUnits = await Promise.all(
       unitList.map((id) => createUnitInstance(id))
     );
 
     const initialIncident: Incident = {
       id: incidentId,
-      box,
-      address,
+      box: boxMatch ? boxMatch[1] : "---",
+      address: addrMatch ? addrMatch[1].trim() : "Unknown",
       active: true,
-      callNotes: notes,
-      narrative: narrativeMatch ? narrativeMatch[1].trim() : "WORKING",
-      date: dateMatch ? dateMatch[1] : "",
-      time: timeMatch ? timeMatch[1] : "",
+      benchmarks: {},
     };
 
-    // 4. Update State & DB
     setIncident(initialIncident);
     setUnits(initialUnits);
-    setRunningIncidents((prev) => [initialIncident, ...prev.slice(0, 4)]);
     setView("dispatch");
 
     await supabase.from("incidents").upsert([
       {
         id: incidentId,
-        box_number: box,
-        address,
+        address: initialIncident.address,
         state: { units: initialUnits, incident: initialIncident },
       },
     ]);
   };
 
-  const handleEndIncident = async () => {
-    if (!incident?.id) return;
-    if (!window.confirm("End this incident?")) return;
-    const closed = { ...incident, active: false };
-    await supabase
-      .from("incidents")
-      .update({ state: { units, incident: closed } })
-      .eq("id", incident.id);
-    setIncident(null);
-    setUnits([]);
-    setView("pre-dispatch");
-  };
-
   const syncState = async (payload: any) => {
     if (!incident?.id) return;
-    if (payload.units) setUnits(payload.units);
+    const nextUnits = payload.units || units;
+    const nextIncident = payload.incident || incident;
+    setUnits(nextUnits);
+    setIncident(nextIncident);
     await supabase
       .from("incidents")
-      .update({ state: { ...payload, incident } })
+      .update({ state: { units: nextUnits, incident: nextIncident } })
       .eq("id", incident.id);
   };
-
-  const navStyle = (active: boolean, color: string) => ({
-    background: active ? color : "transparent",
-    color: "white",
-    border: "none",
-    padding: "0 25px",
-    cursor: "pointer",
-    fontWeight: "bold" as const,
-    fontSize: "11px",
-    textTransform: "uppercase" as const,
-  });
 
   return (
     <div
-      style={{
-        backgroundColor: "#060b13",
-        minHeight: "100vh",
-        color: "white",
-        fontFamily: "sans-serif",
-      }}
+      style={{ backgroundColor: "#060b13", minHeight: "100vh", color: "white" }}
     >
       <nav
         style={{
           display: "flex",
           background: "#111827",
-          borderBottom: "1px solid #1f2937",
           height: "45px",
+          borderBottom: "1px solid #1f2937",
         }}
       >
-        <button
-          onClick={() => setView("pre-dispatch")}
-          style={navStyle(view === "pre-dispatch", "#374151")}
-        >
-          MONITOR
-        </button>
-        <button
-          onClick={() => setView("dispatch")}
-          style={navStyle(view === "dispatch", "#2563eb")}
-        >
-          DISPATCH
-        </button>
-        <button
-          onClick={() => setView("command")}
-          style={navStyle(view === "command", "#ea580c")}
-        >
-          COMMAND
-        </button>
-        <button
-          onClick={() => setView("roster")}
-          style={navStyle(view === "roster", "#8b5cf6")}
-        >
-          ROSTER
-        </button>
-        <div style={{ flexGrow: 1 }} />
-        {incident && (
+        {["pre-dispatch", "dispatch", "command", "roster"].map((v) => (
           <button
-            onClick={handleEndIncident}
+            key={v}
+            onClick={() => setView(v)}
             style={{
-              background: "#ef4444",
+              background: view === v ? "#2563eb" : "transparent",
               color: "white",
               border: "none",
-              padding: "0 15px",
+              padding: "0 20px",
               cursor: "pointer",
               fontWeight: "bold",
               fontSize: "11px",
             }}
           >
-            END CALL
+            {v.toUpperCase()}
           </button>
-        )}
+        ))}
       </nav>
-      <main style={{ padding: 0 }}>
+      <main>
         {view === "pre-dispatch" && (
           <PreDispatch
             onStart={handleStartIncident}
             setIncident={setIncident}
             setUnits={setUnits}
             setView={setView}
-            runningIncidents={runningIncidents}
           />
         )}
         {incident && view === "dispatch" && (
@@ -268,7 +206,6 @@ export default function App() {
             units={units}
             setUnits={setUnits}
             syncState={syncState}
-            createUnitInstance={createUnitInstance}
           />
         )}
         {incident && view === "command" && (

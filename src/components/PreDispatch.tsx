@@ -1,23 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
 
-// 1. Define the rules for the data being passed in
-interface PreDispatchProps {
-  onStart: (notes: string) => void;
-  setIncident: (incident: any) => void;
-  setUnits: (units: any[]) => void;
-  setView: (view: string) => void;
-  runningIncidents: any[];
-}
-
-// 2. The "export default" makes this file a module
 export default function PreDispatch({
   onStart,
   setIncident,
   setUnits,
   setView,
-  runningIncidents,
-}: PreDispatchProps) {
+}: any) {
   const [raw, setRaw] = useState("");
   const [ongoing, setOngoing] = useState<any[]>([]);
 
@@ -28,20 +17,24 @@ export default function PreDispatch({
       .order("updated_at", { ascending: false })
       .limit(10);
 
-    if (error) console.error("Fetch Error:", error);
-
     if (data) {
-      // Filter locally for active calls to ensure reliability
-      const activeCalls = data.filter(
-        (inc) => inc.state?.incident?.active === true
-      );
+      const activeCalls = data.filter((inc) => {
+        try {
+          const state =
+            typeof inc.state === "string" ? JSON.parse(inc.state) : inc.state;
+          // If 'active' isn't explicitly false, we show it in ongoing
+          return state?.incident?.active !== false;
+        } catch (e) {
+          return false;
+        }
+      });
       setOngoing(activeCalls);
     }
   };
 
   useEffect(() => {
     fetchCalls();
-    const interval = setInterval(fetchCalls, 10000);
+    const interval = setInterval(fetchCalls, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -51,25 +44,21 @@ export default function PreDispatch({
         display: "grid",
         gridTemplateColumns: "1fr 450px",
         gap: 20,
-        height: "85vh",
+        height: "calc(100vh - 45px)",
         background: "#060b13",
-        padding: "10px",
+        padding: "15px",
       }}
     >
-      {/* LEFT: LIVE CAD FEED */}
       <iframe
         src="https://dev.codemessaging.net/rc/DF5Z4H3Z4VP.php"
         style={{
           width: "100%",
           height: "100%",
+          border: "1px solid #1e293b",
           borderRadius: 8,
-          border: "1px solid #334155",
-          background: "white",
         }}
-        title="CAD Monitor"
+        title="CAD"
       />
-
-      {/* RIGHT: CONTROLS */}
       <aside style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <div
           style={{
@@ -79,43 +68,35 @@ export default function PreDispatch({
             border: "1px solid #f97316",
           }}
         >
-          <h3 style={{ color: "#f97316", marginTop: 0 }}>QUICK LAUNCH</h3>
+          <h3 style={{ color: "#f97316", margin: "0 0 10px 0" }}>
+            QUICK LAUNCH
+          </h3>
           <textarea
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder="Paste BOX: ADDR: UNIT:..."
             style={{
               width: "100%",
-              height: 120,
+              height: 100,
               background: "#0f172a",
               color: "#4ade80",
-              padding: 10,
-              borderRadius: 4,
-              fontFamily: "monospace",
               border: "1px solid #334155",
             }}
           />
           <button
-            onClick={() => {
-              onStart(raw);
-              setRaw("");
-            }}
+            onClick={() => onStart(raw)}
             style={{
               width: "100%",
               background: "#f97316",
-              padding: 12,
-              border: "none",
               color: "white",
-              fontWeight: "bold",
+              padding: 10,
               marginTop: 10,
-              borderRadius: 4,
-              cursor: "pointer",
+              border: "none",
+              fontWeight: "bold",
             }}
           >
             START INCIDENT
           </button>
         </div>
-
         <div
           style={{
             background: "#1e293b",
@@ -123,78 +104,50 @@ export default function PreDispatch({
             borderRadius: 8,
             flex: 1,
             overflowY: "auto",
-            border: "1px solid #334155",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "15px",
-            }}
-          >
-            <h3 style={{ color: "#38bdf8", margin: 0 }}>ONGOING CALLS</h3>
-            <button
-              onClick={fetchCalls}
-              style={{
-                background: "#334155",
-                color: "white",
-                border: "none",
-                padding: "5px 10px",
-                borderRadius: 4,
-                cursor: "pointer",
-                fontSize: "10px",
-              }}
-            >
-              REFRESH
-            </button>
-          </div>
-
-          {ongoing.map((inc) => (
-            <div
-              key={inc.id}
-              style={{
-                background: "#0f172a",
-                padding: 15,
-                marginBottom: 10,
-                borderLeft: "6px solid #38bdf8",
-                borderRadius: 4,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <strong style={{ color: "white" }}>
-                  BOX {inc.state?.incident?.box}
-                </strong>
-                <span style={{ fontSize: "10px", color: "#64748b" }}>
-                  {inc.id}
-                </span>
-              </div>
-              <div style={{ fontSize: 12, color: "#94a3b8", margin: "5px 0" }}>
-                {inc.state?.incident?.address}
-              </div>
-              <button
-                onClick={() => {
-                  setIncident(inc.state.incident);
-                  setUnits(inc.state.units || []);
-                  setView("dispatch");
-                }}
+          <h3 style={{ color: "#38bdf8", margin: "0 0 10px 0" }}>
+            ONGOING CALLS
+          </h3>
+          {ongoing.map((inc) => {
+            const state =
+              typeof inc.state === "string" ? JSON.parse(inc.state) : inc.state;
+            return (
+              <div
+                key={inc.id}
                 style={{
-                  width: "100%",
-                  marginTop: 10,
-                  background: "#38bdf8",
-                  color: "black",
-                  fontWeight: "bold",
-                  padding: 8,
-                  border: "none",
-                  borderRadius: 4,
-                  cursor: "pointer",
+                  background: "#0f172a",
+                  padding: 15,
+                  marginBottom: 10,
+                  borderLeft: "5px solid #38bdf8",
                 }}
               >
-                JOIN INCIDENT
-              </button>
-            </div>
-          ))}
+                <div style={{ color: "white", fontWeight: "bold" }}>
+                  BOX {state?.incident?.box}
+                </div>
+                <div style={{ color: "#94a3b8", fontSize: "12px" }}>
+                  {state?.incident?.address}
+                </div>
+                <button
+                  onClick={() => {
+                    setIncident(state.incident);
+                    setUnits(state.units);
+                    setView("dispatch");
+                  }}
+                  style={{
+                    width: "100%",
+                    marginTop: 10,
+                    background: "#38bdf8",
+                    border: "none",
+                    fontWeight: "bold",
+                    padding: 5,
+                  }}
+                >
+                  JOIN
+                </button>
+              </div>
+            );
+          })}
         </div>
       </aside>
     </div>
