@@ -20,6 +20,8 @@ export interface FireUnit {
   assignment: string;
   members: Member[];
   linked_logic: string[][];
+  station_id?: string;
+  battalion_id?: string;
 }
 
 export interface Incident {
@@ -37,6 +39,7 @@ export default function App() {
   const [incident, setIncident] = useState<Incident | null>(null);
   const [units, setUnits] = useState<FireUnit[]>([]);
 
+  // REAL-TIME DATABASE SYNC
   useEffect(() => {
     if (!incident?.id) return;
     const channel = supabase
@@ -70,6 +73,7 @@ export default function App() {
     };
   }, [incident?.id]);
 
+  // --- DYNAMIC UNIT BUILDER ---
   const createUnitInstance = async (unitId: string): Promise<FireUnit> => {
     let rawId = unitId.toUpperCase().replace(/\s+/g, "");
     let status = "dispatched";
@@ -79,17 +83,20 @@ export default function App() {
       rawId = rawId.substring(1);
     }
 
+    // UPDATED: Fetching the new station_id and battalion_id columns
     const { data: appData } = await supabase
       .from("apparatus")
-      .select("*")
+      .select("id, roles, type, linked_pairs, station_id, battalion_id")
       .eq("id", rawId)
       .maybeSingle();
+
     const { data: rosterData } = await supabase
       .from("rosters")
       .select("*")
       .eq("id", rawId)
       .maybeSingle();
 
+    // SMART FALLBACKS (If not in database)
     const isTruck = /^(T|Q|S|TW|TK|RS)/.test(rawId);
     const isMedic = /^(M|A|PM)/.test(rawId);
     const isChief = /^(BC|DC|CH|B|STA|EMS)/.test(rawId);
@@ -99,8 +106,12 @@ export default function App() {
     if (isMedic) defaultRoles = ["AIC", "Driver"];
     if (isChief) defaultRoles = ["Commander"];
 
-    const dbRoles: string[] = appData?.roles || defaultRoles;
-    const linkedLogic: string[][] = appData?.linked_pairs || [];
+    const dbRoles: string[] = Array.isArray(appData?.roles)
+      ? appData.roles
+      : defaultRoles;
+    const linkedLogic: string[][] = Array.isArray(appData?.linked_pairs)
+      ? appData.linked_pairs
+      : [];
 
     return {
       id: rawId,
@@ -109,6 +120,8 @@ export default function App() {
         appData?.type ||
         (isMedic ? "MEDIC" : isTruck ? "TRUCK" : isChief ? "CHIEF" : "ENGINE"),
       assignment: "STAGING",
+      station_id: appData?.station_id || "",
+      battalion_id: appData?.battalion_id || "",
       linked_logic: linkedLogic,
       members: dbRoles.map((role: string) => {
         const p = rosterData?.members?.find((m: any) => m.role === role);
@@ -122,6 +135,7 @@ export default function App() {
     };
   };
 
+  // --- CAD PARSING ---
   const handleStartIncident = async (notes: string) => {
     const clean = notes.replace(/\n/g, " ").replace(/\s\s+/g, " ");
 
@@ -142,9 +156,9 @@ export default function App() {
 
     const rawUnits = unitMatch ? unitMatch[1] : "";
     const unitList = rawUnits.split(/[\s,]+/).filter((u) => {
-      // IGNORE STAXXA format (e.g., STA08A, STA19B)
-      const isStation = /^STA\d+[A-Z]?$/i.test(u);
-      return u.length > 1 && !isStation;
+      // IGNORE STAXXA format (e.g., STA08A)
+      const isStationCode = /^STA\d+[A-Z]?$/i.test(u);
+      return u.length > 1 && !isStationCode;
     });
 
     const initialUnits = await Promise.all(
@@ -155,10 +169,10 @@ export default function App() {
     const initialIncident: Incident = {
       id: incidentId,
       box: boxMatch ? boxMatch[1] : "---",
-      call: callMatch ? callMatch[1].trim() : "",
+      call: callMatch ? callMatch[1].trim() : "Unknown Dispatch",
       address: addrMatch ? addrMatch[1].trim() : "Unknown Address",
       active: true,
-      notes: infoMatch ? infoMatch[1].trim() : "No additional comments",
+      notes: infoMatch ? infoMatch[1].trim() : "",
       timestamp: `${dateMatch ? dateMatch[1] : ""} ${
         timeMatch ? timeMatch[1] : ""
       }`.trim(),
@@ -168,6 +182,7 @@ export default function App() {
     setIncident(initialIncident);
     setView("dispatch");
 
+    // Persist to Supabase
     await supabase.from("incidents").insert([
       {
         id: incidentId,
@@ -180,13 +195,10 @@ export default function App() {
   };
 
   const handleEndIncident = async () => {
-    if (!incident || !window.confirm("End incident?")) return;
+    if (!incident || !window.confirm("End incident and clear boards?")) return;
     await supabase
       .from("incidents")
-      .update({
-        active: false,
-        state: { units: [], incident: { ...incident, active: false } },
-      })
+      .update({ active: false })
       .eq("id", incident.id);
     setIncident(null);
     setUnits([]);
@@ -275,6 +287,7 @@ export default function App() {
           ROSTER
         </button>
       </nav>
+
       <main>
         {view === "pre-dispatch" && (
           <PreDispatch

@@ -10,47 +10,56 @@ interface RosterMember {
 interface UnitRoster {
   id: string;
   members: RosterMember[];
+  station_id: string;
+  battalion_id: string;
 }
 
 export default function Roster() {
   const [rosters, setRosters] = useState<UnitRoster[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     fetchRosters();
   }, []);
 
   const fetchRosters = async () => {
-    setLoading(true);
     try {
-      // Fetch apparatus to get roles and rosters to get names
+      setLoading(true);
+      setErrorMsg(null);
+
+      // 1. Fetch apparatus with the new ID columns
       const { data: appData, error: appError } = await supabase
         .from("apparatus")
-        .select("id, roles");
+        .select("id, roles, station_id, battalion_id");
+
+      if (appError) throw appError;
+
+      // 2. Fetch saved rosters
       const { data: rosterData, error: rosterError } = await supabase
         .from("rosters")
-        .select("*");
+        .select("id, members");
 
-      if (appError || rosterError)
-        throw new Error("Database connection failed");
+      if (rosterError) throw rosterError;
 
       if (appData) {
         const combined = appData.map((app) => {
-          // Safety: Fallback for missing IDs
-          const unitId = app.id || "Unknown Unit";
-
-          const existing = rosterData?.find((r) => r.id === unitId);
+          const existing = rosterData?.find((r) => r.id === app.id);
 
           let membersArray: RosterMember[] = [];
 
-          // Safety: Check if members is actually an array
           if (existing && Array.isArray(existing.members)) {
             membersArray = existing.members;
           } else {
             // Build from apparatus roles if no roster saved
-            // Handle if roles is a string or array (PG Array fix)
-            const rolesList = Array.isArray(app.roles) ? app.roles : [];
+            const rawRoles = app.roles;
+            const rolesList = Array.isArray(rawRoles)
+              ? rawRoles
+              : typeof rawRoles === "string"
+              ? JSON.parse(rawRoles)
+              : [];
+
             membersArray = rolesList.map((r: string) => ({
               role: r || "Member",
               name: "",
@@ -58,25 +67,38 @@ export default function Roster() {
             }));
           }
 
-          return { id: unitId, members: membersArray };
+          return {
+            id: app.id || "Unknown",
+            members: membersArray,
+            station_id: app.station_id || "99", // Fallback for sorting
+            battalion_id: app.battalion_id || "UNASSIGNED",
+          };
         });
 
-        // ROBUST SORT: Handles nulls and alphanumeric IDs correctly
+        // 3. MULTI-LEVEL SORT: Battalion -> Station -> Unit ID
         const sorted = combined.sort((a, b) => {
-          const idA = a.id || "";
-          const idB = b.id || "";
-          return idA.localeCompare(idB, undefined, {
+          // Sort by Battalion (B1, B2, etc.)
+          const bSort = a.battalion_id.localeCompare(b.battalion_id);
+          if (bSort !== 0) return bSort;
+
+          // Sort by Station Number (Numeric)
+          const sSort = a.station_id.localeCompare(b.station_id, undefined, {
             numeric: true,
-            sensitivity: "base",
           });
+          if (sSort !== 0) return sSort;
+
+          // Final sort by Unit ID
+          return a.id.localeCompare(b.id, undefined, { numeric: true });
         });
 
         setRosters(sorted);
       }
-    } catch (err) {
-      console.error("Roster Load Error:", err);
+    } catch (err: any) {
+      console.error("Critical Roster Error:", err);
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const updateRoster = async (
@@ -104,13 +126,45 @@ export default function Roster() {
     }
   };
 
-  const filteredRosters = (rosters || []).filter((r) =>
-    r.id?.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredRosters = (rosters || []).filter(
+    (r) =>
+      r.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.station_id.includes(searchTerm)
   );
+
+  if (errorMsg)
+    return (
+      <div
+        style={{
+          padding: "50px",
+          color: "#f87171",
+          textAlign: "center",
+          background: "#060b13",
+          minHeight: "100vh",
+        }}
+      >
+        <h2>Roster Error</h2>
+        <p>{errorMsg}</p>
+        <button
+          onClick={fetchRosters}
+          style={{ padding: "10px 20px", cursor: "pointer" }}
+        >
+          Retry Load
+        </button>
+      </div>
+    );
 
   if (loading)
     return (
-      <div style={{ padding: "50px", color: "white" }}>
+      <div
+        style={{
+          padding: "50px",
+          color: "#38bdf8",
+          textAlign: "center",
+          background: "#060b13",
+          minHeight: "100vh",
+        }}
+      >
         Loading Personnel Database...
       </div>
     );
@@ -121,23 +175,35 @@ export default function Roster() {
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: "flex-end",
           marginBottom: "30px",
         }}
       >
-        <h2 style={{ color: "white", margin: 0 }}>Apparatus Rosters</h2>
+        <div>
+          <h2 style={{ color: "white", margin: 0 }}>Apparatus Rosters</h2>
+          <p
+            style={{
+              color: "#38bdf8",
+              fontSize: "12px",
+              fontWeight: "bold",
+              marginTop: "5px",
+            }}
+          >
+            ORGANIZED BY BATTALION & STATION
+          </p>
+        </div>
         <input
           type="text"
-          placeholder="Filter units (e.g. 47)..."
+          placeholder="Filter Unit or Station..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{
-            padding: "10px 15px",
+            padding: "12px 20px",
             borderRadius: "8px",
-            background: "#0f172a",
             border: "1px solid #1e293b",
+            background: "#0f172a",
             color: "white",
-            width: "300px",
+            width: "350px",
             outline: "none",
           }}
         />
@@ -146,7 +212,7 @@ export default function Roster() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(350px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
           gap: "20px",
         }}
       >
@@ -155,7 +221,7 @@ export default function Roster() {
             key={roster.id}
             style={{
               background: "#0f172a",
-              borderRadius: "12px",
+              borderRadius: "10px",
               border: "1px solid #1e293b",
               overflow: "hidden",
             }}
@@ -163,36 +229,68 @@ export default function Roster() {
             <div
               style={{
                 background: "#1e293b",
-                padding: "12px 20px",
-                fontWeight: "bold",
-                color: "#38bdf8",
+                padding: "10px 15px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
               }}
             >
-              {roster.id}
+              <div>
+                <span
+                  style={{
+                    fontWeight: "bold",
+                    color: "#38bdf8",
+                    fontSize: "18px",
+                  }}
+                >
+                  {roster.id}
+                </span>
+                <span
+                  style={{
+                    color: "#64748b",
+                    fontSize: "10px",
+                    marginLeft: "10px",
+                  }}
+                >
+                  STATION {roster.station_id}
+                </span>
+              </div>
+              <span
+                style={{
+                  fontSize: "10px",
+                  color: "#facc15",
+                  fontWeight: "bold",
+                  background: "#060b13",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                }}
+              >
+                {roster.battalion_id}
+              </span>
             </div>
 
-            <div style={{ padding: "20px" }}>
+            <div style={{ padding: "15px" }}>
               {roster.members.map((m, idx) => (
                 <div
                   key={idx}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "110px 1fr",
-                    gap: "10px",
-                    marginBottom: "12px",
+                    gridTemplateColumns: "100px 1fr",
+                    gap: "8px",
+                    marginBottom: "10px",
                   }}
                 >
                   <div
                     style={{
-                      fontSize: "11px",
+                      fontSize: "10px",
                       color: "#94a3b8",
                       alignSelf: "center",
                       fontWeight: "bold",
                     }}
                   >
-                    {m.role?.toUpperCase() || "MEMBER"}
+                    {(m.role || "Member").toUpperCase()}
                   </div>
-                  <div style={{ display: "flex", gap: "5px" }}>
+                  <div style={{ display: "flex", gap: "4px" }}>
                     <select
                       value={m.rank || ""}
                       onChange={(e) =>
@@ -206,10 +304,10 @@ export default function Roster() {
                         fontSize: "11px",
                       }}
                     >
-                      <option value="">Rank</option>
-                      <option value="CHIEF">Chief</option>
-                      <option value="CAPTAIN">Capt</option>
-                      <option value="LT">Lt</option>
+                      <option value="">RANK</option>
+                      <option value="CHIEF">CHIEF</option>
+                      <option value="CAPTAIN">CAPT</option>
+                      <option value="LT">LT</option>
                       <option value="PM">PM</option>
                       <option value="FF">FF</option>
                     </select>
@@ -227,7 +325,7 @@ export default function Roster() {
                         borderRadius: "4px",
                         padding: "8px",
                         color: "white",
-                        fontSize: "14px",
+                        fontSize: "13px",
                       }}
                     />
                   </div>
