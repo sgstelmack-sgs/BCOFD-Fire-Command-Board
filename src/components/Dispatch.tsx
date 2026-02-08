@@ -1,22 +1,18 @@
 import React, { useState } from "react";
-import { FireUnit, Incident } from "../App";
+import { supabase } from "../supabaseClient";
+import { FireUnit } from "../App"; // Import the interface
 
-export default function Dispatch({
-  incident,
-  units,
-  syncState,
-}: {
-  incident: Incident;
-  units: FireUnit[];
-  syncState: any;
-}) {
-  // Track which units are expanded by their ID
+export default function Dispatch({ incident, units, syncState }: any) {
   const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
+  const [editingMember, setEditingMember] = useState<{
+    unitId: string;
+    idx: number;
+  } | null>(null);
 
-  const activeAlerts = units.filter((u: FireUnit) => u.status === "dispatched");
-  const ghostedAlerts = units.filter((u: FireUnit) => u.status === "ghosted");
+  const activeUnits = units.filter((u: FireUnit) => !u.isGhosted);
+  const ghostedUnits = units.filter((u: FireUnit) => u.isGhosted);
 
-  const toggleExpand = (unitId: string) => {
+  const toggleUnit = (unitId: string) => {
     setExpandedUnits((prev) =>
       prev.includes(unitId)
         ? prev.filter((id) => id !== unitId)
@@ -24,272 +20,343 @@ export default function Dispatch({
     );
   };
 
-  const renderUnitCard = (u: FireUnit, isGhosted: boolean) => {
-    const isExpanded = expandedUnits.includes(u.id);
+  const toggleGhost = (unitId: string) => {
+    const nextUnits = units.map((u: FireUnit) =>
+      u.id === unitId ? { ...u, isGhosted: !u.isGhosted } : u
+    );
+    syncState({ units: nextUnits });
+  };
+
+  const updateStatus = (unitId: string, status: string) => {
+    const nextUnits = units.map((u: FireUnit) =>
+      u.id === unitId ? { ...u, status, isGhosted: false } : u
+    );
+    syncState({ units: nextUnits });
+  };
+
+  const handleNameChange = async (
+    unitId: string,
+    idx: number,
+    newName: string
+  ) => {
+    const nextUnits = units.map((u: FireUnit) => {
+      if (u.id === unitId) {
+        const nextMembers = [...u.members];
+        nextMembers[idx] = { ...nextMembers[idx], name: newName };
+        return { ...u, members: nextMembers };
+      }
+      return u;
+    });
+    syncState({ units: nextUnits });
+    setEditingMember(null);
+  };
+
+  const renderUnitCard = (unit: FireUnit) => {
+    const isExpanded = expandedUnits.includes(unit.id);
+    const isGhosted = unit.isGhosted;
 
     return (
       <div
-        key={u.id}
+        key={unit.id}
         style={{
-          background: "#0f172a",
-          borderRadius: "12px",
-          border: isGhosted ? "2px dashed #334155" : "2px solid #1e293b",
-          marginBottom: "15px",
-          opacity: isGhosted ? 0.6 : 1,
-          filter: isGhosted ? "grayscale(100%)" : "none",
+          background: isGhosted ? "rgba(30, 41, 59, 0.3)" : "#1e293b",
+          marginBottom: "12px",
+          borderRadius: "10px",
+          border: isGhosted ? "1px dashed #334151" : "1px solid #334151",
           overflow: "hidden",
         }}
       >
-        {/* CARD HEADER - Clickable to toggle expand */}
-        <div
-          onClick={() => toggleExpand(u.id)}
-          style={{
-            background: isGhosted ? "#1e293b" : "#1f2937",
-            padding: "12px 15px",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            cursor: "pointer",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <span
-              style={{
-                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                transition: "0.2s",
-                fontSize: "12px",
-                color: "#94a3b8",
-              }}
-            >
-              ▶
-            </span>
-            <span
-              style={{ fontWeight: "bold", color: "white", fontSize: "18px" }}
-            >
-              {u.id} {isGhosted && "(GHOST)"}
-            </span>
-          </div>
-          <span
-            style={{
-              fontSize: "10px",
-              color: "#38bdf8",
-              border: "1px solid #38bdf8",
-              padding: "2px 6px",
-              borderRadius: "4px",
-            }}
-          >
-            {u.type}
-          </span>
-        </div>
-
-        {/* COLLAPSIBLE CREW SECTION */}
-        {isExpanded && (
+        <div style={{ padding: "15px" }}>
           <div
             style={{
-              padding: "15px",
-              borderTop: "1px solid #1e293b",
-              background: "#0b121f",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: isExpanded ? "15px" : "12px",
             }}
           >
-            {u.members.map((m: any, mIdx: number) => (
-              <div key={mIdx} style={{ marginBottom: "12px" }}>
-                <label
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span
+                onClick={() => toggleUnit(unit.id)}
+                style={{
+                  fontSize: "18px",
+                  color: "#64748b",
+                  cursor: "pointer",
+                }}
+              >
+                {isExpanded ? "▼" : "▶"}
+              </span>
+              <span
+                style={{
+                  fontSize: "24px",
+                  fontWeight: 900,
+                  color: isGhosted ? "#64748b" : "#f8fafc",
+                }}
+              >
+                {unit.displayId}
+              </span>
+              {isGhosted && (
+                <span
+                  onClick={() => toggleGhost(unit.id)}
                   style={{
-                    fontSize: "10px",
-                    color: "#38bdf8",
-                    display: "block",
-                    marginBottom: "4px",
-                    fontWeight: "bold",
+                    cursor: "pointer",
+                    fontSize: "18px",
+                    background: "#334151",
+                    padding: "2px 6px",
+                    borderRadius: "4px",
                   }}
                 >
-                  {m.role.toUpperCase()}
-                </label>
-                <input
-                  type="text"
-                  value={m.name}
-                  onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking input
-                  onChange={(e) => {
-                    const nextUnits = units.map((unit: FireUnit) => {
-                      if (unit.id !== u.id) return unit;
-                      const nextM = [...unit.members];
-                      nextM[mIdx].name = e.target.value;
-                      return { ...unit, members: nextM };
-                    });
-                    syncState({ units: nextUnits });
-                  }}
+                  👻
+                </span>
+              )}
+            </div>
+            <span
+              style={{ fontSize: "12px", color: "#64748b", fontWeight: "bold" }}
+            >
+              {unit.type}
+            </span>
+          </div>
+
+          {isExpanded && (
+            <div
+              style={{
+                background: "#0f172a",
+                padding: "10px",
+                borderRadius: "6px",
+                marginBottom: "15px",
+                border: "1px solid #1e293b",
+              }}
+            >
+              {unit.members.map((m: any, idx: number) => (
+                <div
+                  key={idx}
                   style={{
-                    width: "100%",
-                    background: "#060b13",
-                    border: "1px solid #334155",
-                    borderRadius: "6px",
-                    padding: "10px",
-                    color: "white",
-                    fontSize: "14px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "6px 0",
+                    borderBottom:
+                      idx === unit.members.length - 1
+                        ? "none"
+                        : "1px solid #1e293b",
                   }}
-                />
-              </div>
+                >
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      color: "#64748b",
+                      fontWeight: "bold",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {m.role}
+                  </span>
+                  {editingMember?.unitId === unit.id &&
+                  editingMember?.idx === idx ? (
+                    <input
+                      autoFocus
+                      defaultValue={m.name}
+                      onBlur={(e) =>
+                        handleNameChange(unit.id, idx, e.target.value)
+                      }
+                      onKeyDown={(e) =>
+                        e.key === "Enter" &&
+                        handleNameChange(
+                          unit.id,
+                          idx,
+                          (e.target as HTMLInputElement).value
+                        )
+                      }
+                      style={{
+                        background: "#334151",
+                        color: "white",
+                        border: "1px solid #38bdf8",
+                        borderRadius: "3px",
+                        fontSize: "13px",
+                        padding: "0 5px",
+                        width: "60%",
+                      }}
+                    />
+                  ) : (
+                    <span
+                      onClick={() =>
+                        !isGhosted && setEditingMember({ unitId: unit.id, idx })
+                      }
+                      style={{
+                        fontSize: "13px",
+                        color: isGhosted ? "#475569" : "#38bdf8",
+                        cursor: isGhosted ? "default" : "pointer",
+                      }}
+                    >
+                      {m.name}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: "8px" }}>
+            {["enroute", "arrived"].map((s) => (
+              <button
+                key={s}
+                onClick={() => updateStatus(unit.id, s)}
+                style={{
+                  flex: 1,
+                  padding: "12px 0",
+                  fontSize: "12px",
+                  fontWeight: "bold",
+                  borderRadius: "6px",
+                  border: "none",
+                  cursor: "pointer",
+                  background:
+                    unit.status === s
+                      ? s === "arrived"
+                        ? "#166534"
+                        : "#1e40af"
+                      : "#334151",
+                  color: unit.status === s ? "white" : "#94a3b8",
+                }}
+              >
+                {s.toUpperCase()}
+              </button>
             ))}
           </div>
-        )}
-
-        {/* ACTION BUTTON - Always visible */}
-        <div style={{ padding: "10px 15px", background: "#0f172a" }}>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              const nextUnits = units.map((unit: FireUnit) =>
-                unit.id === u.id ? { ...unit, status: "enroute" } : unit
-              );
-              syncState({ units: nextUnits });
-            }}
-            style={{
-              width: "100%",
-              background: isGhosted ? "#475569" : "#eab308",
-              color: isGhosted ? "white" : "black",
-              padding: "12px",
-              borderRadius: "8px",
-              border: "none",
-              fontWeight: "900",
-              cursor: "pointer",
-              textTransform: "uppercase",
-            }}
-          >
-            {isGhosted ? "ACTIVATE & RESPOND" : "RESPONDING"}
-          </button>
         </div>
       </div>
     );
   };
 
+  const mapUrl = `https://maps.google.com/maps?q=${encodeURIComponent(
+    incident.address + ", Baltimore County, MD"
+  )}&t=k&z=19&ie=UTF8&iwloc=&output=embed`;
+
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "1fr 500px",
-        height: "calc(100vh - 48px)",
+        gridTemplateColumns: "1fr 420px",
+        height: "100%",
         background: "#060b13",
       }}
     >
-      <section
+      <div
         style={{
           display: "flex",
           flexDirection: "column",
-          borderRight: "2px solid #1f2937",
-          overflow: "hidden",
+          borderRight: "2px solid #1e293b",
         }}
       >
         <div
           style={{
-            padding: "20px",
-            background: "#0f172a",
-            borderBottom: "1px solid #1f2937",
+            background: "#111827",
+            padding: "20px 30px",
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
+            gap: "40px",
+            borderBottom: "4px solid #ef4444",
           }}
         >
           <div>
-            <div
-              style={{ fontSize: "12px", color: "#38bdf8", fontWeight: "bold" }}
+            <small
+              style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "bold" }}
             >
-              BOX {incident.box} | {incident.call}
-            </div>
-            <h1 style={{ margin: "5px 0", color: "white", fontSize: "28px" }}>
-              {incident.address}
-            </h1>
-            <div style={{ fontSize: "11px", color: "#94a3b8" }}>
-              {incident.timestamp}
+              BOX
+            </small>
+            <div style={{ fontSize: "32px", fontWeight: 900 }}>
+              {incident.box}
             </div>
           </div>
-          <div
-            style={{ textAlign: "right", color: "#94a3b8", fontSize: "11px" }}
-          >
-            ID: {incident.id}
+          <div style={{ flex: 1 }}>
+            <small
+              style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "bold" }}
+            >
+              ADDRESS
+            </small>
+            <div
+              style={{ fontSize: "32px", fontWeight: 900, color: "#38bdf8" }}
+            >
+              {incident.address}
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <small
+              style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "bold" }}
+            >
+              INCIDENT #
+            </small>
+            <div style={{ fontSize: "24px", fontWeight: 700, opacity: 0.8 }}>
+              {incident.id}
+            </div>
           </div>
         </div>
-
-        <div style={{ flex: 2, background: "#000" }}>
+        <div style={{ flex: 1 }}>
           <iframe
-            title="Satellite Map"
+            title="Map"
             width="100%"
             height="100%"
             style={{ border: 0 }}
-            src={`https://www.google.com/maps/embed/v1/search?key=YOUR_API_KEY&q=${encodeURIComponent(
-              incident.address
-            )}&maptype=satellite&zoom=19`}
+            src={mapUrl}
             allowFullScreen
-          />
+          ></iframe>
         </div>
-
         <div
           style={{
-            flex: 1,
-            padding: "20px",
-            background: "#0b121f",
-            borderTop: "2px solid #1f2937",
+            height: "250px",
+            padding: "25px",
             overflowY: "auto",
+            borderTop: "2px solid #1e293b",
           }}
         >
-          <h3
+          <h4
             style={{
-              color: "#facc15",
-              fontSize: "11px",
-              marginBottom: "8px",
+              color: "#ef4444",
+              marginTop: 0,
               textTransform: "uppercase",
+              fontSize: "14px",
             }}
           >
-            INFO / COMMENTS
-          </h3>
-          <div
-            style={{
-              color: "#f8fafc",
-              fontSize: "16px",
-              fontWeight: "500",
-              fontFamily: "monospace",
-              backgroundColor: "#1e293b",
-              padding: "15px",
-              borderRadius: "8px",
-              border: "1px solid #334155",
-            }}
-          >
-            {incident.notes}
-          </div>
+            Comments
+          </h4>
+          <p style={{ color: "#cbd5e1", fontSize: "18px" }}>
+            {incident.narrative}
+          </p>
         </div>
-      </section>
+      </div>
 
-      <aside
-        style={{ padding: "20px", overflowY: "auto", background: "#060b13" }}
+      <div
+        style={{ padding: "20px", background: "#0f172a", overflowY: "auto" }}
       >
         <h3
           style={{
-            color: "#38bdf8",
-            fontSize: "12px",
-            marginBottom: "20px",
-            borderBottom: "1px solid #1e293b",
+            color: "#f8fafc",
+            borderBottom: "2px solid #1e293b",
             paddingBottom: "10px",
+            fontSize: "14px",
           }}
         >
-          PRIMARY RESPONSE
+          ASSIGNED UNITS ({activeUnits.length})
         </h3>
-        {activeAlerts.map((u) => renderUnitCard(u, false))}
-        {ghostedAlerts.length > 0 && (
+        <div style={{ marginBottom: "30px" }}>
+          {activeUnits.map((unit: FireUnit) => renderUnitCard(unit))}
+        </div>
+        {ghostedUnits.length > 0 && (
           <>
             <h3
               style={{
                 color: "#64748b",
-                fontSize: "12px",
-                marginTop: "40px",
-                marginBottom: "20px",
-                borderTop: "1px solid #1e293b",
-                paddingTop: "20px",
+                borderBottom: "2px solid #1e293b",
+                paddingBottom: "10px",
+                fontSize: "14px",
+                textTransform: "uppercase",
               }}
             >
-              GHOSTED UNITS
+              Ghosted / Notified ({ghostedUnits.length})
             </h3>
-            {ghostedAlerts.map((u) => renderUnitCard(u, true))}
+            <div>
+              {ghostedUnits.map((unit: FireUnit) => renderUnitCard(unit))}
+            </div>
           </>
         )}
-      </aside>
+      </div>
     </div>
   );
 }
