@@ -1,58 +1,46 @@
-import React, { useState } from "react";
-import { FireUnit, Incident, getUnitColor } from "../App";
+import React, { useState } from 'react';
+import { FireUnit, getUnitColor } from '../App';
 
-/**
- * CAPTAIN'S NOTES: COMMAND BOARD (V3)
- * 1. LAYOUT: Staffing (Left) | Divisions (Middle) | Tasks (Right).
- * 2. TASK DRAGGING: Tasks can be assigned to report to a specific Division.
- * 3. PERSONNEL COLOR: Members show [Unit ID | Name] with the Unit's tactical color.
- */
+const normalize = (str: string) => str?.toLowerCase().replace(/[-\s]/g, "") || "";
 
-export default function CommandBoard({
-  incident,
-  units,
-  syncState,
-  handleEndIncident,
-}: any) {
-  // We track which Task reports to which Division
-  const [taskAssignments, setTaskAssignments] = useState<
-    Record<string, string>
-  >({});
+export default function CommandBoard({ incident, units, syncState, handleEndIncident }: any) {
+  const [taskLocations, setTaskLocations] = useState<Record<string, string>>({});
 
   const divisions = [
-    { id: "ic", name: "Incident Command" },
-    { id: "safety", name: "Safety Officer" },
-    { id: "div-1", name: "Division 1" },
-    { id: "div-2", name: "Division 2" },
-    { id: "div-alpha", name: "Division Alpha" },
-    { id: "div-charlie", name: "Division Charlie" },
-    { id: "rit", name: "RIT" },
+    { id: 'ic', name: 'Incident Command', isICSRole: true },
+    { id: 'safety', name: 'Safety Officer', isICSRole: true },
+    { id: 'div-1', name: 'Division 1', isICSRole: false },
+    { id: 'div-2', name: 'Division 2', isICSRole: false },
+    { id: 'rit-div', name: 'RIT', isICSRole: false },
   ];
 
-  const taskList = [
-    { id: "fire-attack", name: "Fire Attack" },
-    { id: "search-rescue", name: "Search & Rescue" },
-    { id: "ventilation", name: "Ventilation" },
-    { id: "primary-water", name: "Primary Water Supply" },
-    { id: "secondary-water", name: "Secondary Water Supply" },
-    { id: "utilities", name: "Utilities" },
-    { id: "medical", name: "Medical / Triage" },
-    { id: "rehab", name: "Rehab" },
-    { id: "staging-mgr", name: "Staging Manager" },
+  const allTasks = [
+    { id: 'fire-attack', name: 'Fire Attack' },
+    { id: 'search', name: 'Search & Rescue' },
+    { id: 'vent', name: 'Ventilation' },
+    { id: 'water', name: 'Water Supply' },
   ];
 
-  const onDropPersonnel = (
-    unitId: string,
-    memberIdx: number,
-    taskId: string
-  ) => {
+  const updateAssignment = (unitId: string, memberIdx: number, newAssignment: string) => {
     const nextUnits = units.map((u: FireUnit) => {
       if (u.id === unitId) {
         const nextMembers = [...u.members];
-        nextMembers[memberIdx] = {
-          ...nextMembers[memberIdx],
-          assignment: taskId,
-        };
+        const dragged = nextMembers[memberIdx];
+        nextMembers[memberIdx] = { ...dragged, assignment: newAssignment };
+
+        const draggedRoleNorm = normalize(dragged.role);
+        const pair = u.linkedPairs?.find(p => p.some(r => draggedRoleNorm.includes(normalize(r))));
+        const isBroken = (u.brokenLinks || []).some(p => p.includes(dragged.role));
+
+        if (pair && !isBroken) {
+          const partnerRoleKey = pair.find(r => !draggedRoleNorm.includes(normalize(r)));
+          const partnerRoleKeyNorm = normalize(partnerRoleKey || "");
+          const pIdx = nextMembers.findIndex(m => normalize(m.role).includes(partnerRoleKeyNorm));
+          
+          if (pIdx !== -1 && (nextMembers[pIdx].assignment === "Unassigned" || nextMembers[pIdx].assignment === "STAGING")) {
+            nextMembers[pIdx] = { ...nextMembers[pIdx], assignment: newAssignment };
+          }
+        }
         return { ...u, members: nextMembers };
       }
       return u;
@@ -60,243 +48,165 @@ export default function CommandBoard({
     syncState({ units: nextUnits });
   };
 
-  const handleTaskReportTo = (taskId: string, divisionId: string) => {
-    setTaskAssignments((prev) => ({ ...prev, [taskId]: divisionId }));
-    // This could also be synced to Supabase if needed
+  const onDropTask = (taskId: string, divisionId: string) => {
+    setTaskLocations(prev => ({ ...prev, [taskId]: divisionId }));
   };
 
-  const renderPersonnel = (unit: FireUnit, member: any, idx: number) => {
+  const toggleLink = (unitId: string, pair: string[]) => {
+    const nextUnits = units.map((u: FireUnit) => {
+      if (u.id === unitId) {
+        const broken = u.brokenLinks || [];
+        const exists = broken.some(p => p.includes(pair[0]));
+        return { ...u, brokenLinks: exists ? broken.filter(p => !p.includes(pair[0])) : [...broken, pair] };
+      }
+      return u;
+    });
+    syncState({ units: nextUnits });
+  };
+
+  const renderPersonnelTag = (unit: FireUnit, member: any, idx: number, context: 'staffing' | 'tactical') => {
     const unitColor = getUnitColor(unit.type);
+    const pair = unit.linkedPairs?.find(p => p.some(r => normalize(member.role).includes(normalize(r))));
+    const isBroken = (unit.brokenLinks || []).some(p => p.includes(member.role));
+
     return (
-      <div
+      <div 
         key={`${unit.id}-${idx}`}
         draggable
-        onDragStart={(e) =>
-          e.dataTransfer.setData(
-            "member",
-            JSON.stringify({ unitId: unit.id, idx })
-          )
-        }
+        onDragStart={(e) => {
+          e.stopPropagation();
+          e.dataTransfer.setData("type", "personnel");
+          e.dataTransfer.setData("data", JSON.stringify({ unitId: unit.id, idx }));
+        }}
         style={{
-          background: "rgba(15, 23, 42, 0.8)",
-          margin: "2px 0",
-          padding: "4px 8px",
-          borderRadius: "4px",
-          borderLeft: `4px solid ${unitColor}`,
-          fontSize: "11px",
-          display: "flex",
-          justifyContent: "space-between",
-          cursor: "grab",
-          border: "1px solid #1e293b",
-          color: "#f8fafc",
+          background: '#0f172a', margin: '3px 0', padding: '6px', borderRadius: '4px',
+          borderLeft: `4px solid ${unitColor}`, fontSize: '11px', display: 'flex',
+          justifyContent: 'space-between', alignItems: 'center', cursor: 'grab', border: '1px solid #1e293b', color: '#f8fafc'
         }}
       >
         <span>
-          <strong style={{ color: unitColor }}>{unit.displayId}</strong> |{" "}
+          <strong style={{ color: unitColor }}>{unit.displayId}</strong> 
+          <span style={{ color: '#94a3b8', margin: '0 5px' }}>{member.role}</span> 
           {member.name}
         </span>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {context === 'staffing' && pair && (
+            <span onClick={() => toggleLink(unit.id, pair)} style={{ cursor: 'pointer', opacity: isBroken ? 0.3 : 1 }}>
+              {isBroken ? '🔓' : '🔗'}
+            </span>
+          )}
+          {context === 'tactical' && (
+            <button 
+              onClick={() => updateAssignment(unit.id, idx, "Unassigned")}
+              style={{ background: '#991b1b', border: 'none', color: 'white', borderRadius: '2px', padding: '0 4px', cursor: 'pointer', fontWeight: 'bold' }}
+            >
+              -
+            </button>
+          )}
+        </div>
       </div>
     );
   };
 
   const renderTaskCard = (task: any) => {
-    const assignedPersonnel: any[] = [];
-    units.forEach((u: FireUnit) => {
-      u.members.forEach((m, idx) => {
-        if (m.assignment === task.id)
-          assignedPersonnel.push({ unit: u, member: m, idx });
-      });
-    });
+    const assigned = [];
+    units.forEach(u => u.members.forEach((m, idx) => {
+      if (m.assignment === task.id) assigned.push({ unit: u, member: m, idx });
+    }));
 
     return (
-      <div
+      <div 
         key={task.id}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData("type", "task");
+          e.dataTransfer.setData("taskId", task.id);
+        }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
-          const data = JSON.parse(e.dataTransfer.getData("member"));
-          onDropPersonnel(data.unitId, data.idx, task.id);
+          e.preventDefault(); e.stopPropagation();
+          const type = e.dataTransfer.getData("type");
+          if (type === "personnel") {
+            const data = JSON.parse(e.dataTransfer.getData("data"));
+            updateAssignment(data.unitId, data.idx, task.id);
+          }
         }}
         style={{
-          background: "#1e293b",
-          borderRadius: "6px",
-          padding: "10px",
-          marginBottom: "8px",
-          border: "1px solid #334155",
-          minHeight: "60px",
+          background: '#1e293b', borderRadius: '8px', padding: '10px', marginBottom: '8px',
+          border: '1px solid #334155', cursor: 'grab', minHeight: '60px'
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "5px",
-          }}
-        >
-          <span
-            style={{ fontSize: "12px", fontWeight: "bold", color: "#38bdf8" }}
-          >
-            {task.name.toUpperCase()}
-          </span>
-          <select
-            value={taskAssignments[task.id] || ""}
-            onChange={(e) => handleTaskReportTo(task.id, e.target.value)}
-            style={{
-              background: "#0f172a",
-              color: "#94a3b8",
-              border: "none",
-              fontSize: "10px",
-              borderRadius: "4px",
-            }}
-          >
-            <option value="">Report to...</option>
-            {divisions.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        {assignedPersonnel.map((p) => renderPersonnel(p.unit, p.member, p.idx))}
+        <div style={{ fontSize: '12px', fontWeight: 900, color: '#38bdf8', marginBottom: '5px' }}>{task.name.toUpperCase()}</div>
+        {assigned.map(p => renderPersonnelTag(p.unit, p.member, p.idx, 'tactical'))}
       </div>
     );
   };
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "320px 1fr 1fr",
-        height: "100%",
-        background: "#060b13",
-        overflow: "hidden",
-      }}
-    >
-      {/* COLUMN 1: STAGING / STAFFING */}
-      <div
-        style={{
-          background: "#0f172a",
-          borderRight: "1px solid #1e293b",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            padding: "15px",
-            borderBottom: "2px solid #38bdf8",
-            color: "#38bdf8",
-            fontWeight: 900,
-          }}
-        >
-          STAGING / STAFFING
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "15px" }}>
-          {units.map((u: FireUnit) => (
-            <div
-              key={u.id}
-              style={{
-                marginBottom: "20px",
-                background: "#1e293b",
-                padding: "10px",
-                borderRadius: "8px",
-                borderLeft: `8px solid ${getUnitColor(u.type)}`,
+    <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', height: '100%', background: '#060b13', overflow: 'hidden' }}>
+      
+      {/* COLUMN 1: STAFFING */}
+      <div style={{ background: '#0f172a', borderRight: '1px solid #1e293b', overflowY: 'auto', padding: '15px' }}>
+        <h3 style={{ color: '#38bdf8', borderBottom: '2px solid #38bdf8', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>STAFFING</h3>
+        {units.map(u => (
+          <div key={u.id} style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px' }}>
+            <div style={{ fontWeight: 900, marginBottom: '5px' }}>{u.displayId}</div>
+            {u.members.map((m, idx) => (m.assignment === "Unassigned" || m.assignment === "STAGING") && renderPersonnelTag(u, m, idx, 'staffing'))}
+          </div>
+        ))}
+      </div>
+
+      {/* COLUMN 2: IC / DIVISIONS */}
+      <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto' }}>
+        <h3 style={{ color: '#10b981', borderBottom: '2px solid #10b981', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>IC / DIVISIONS</h3>
+        {divisions.map(div => {
+          const divPersonnel = [];
+          units.forEach(u => u.members.forEach((m, idx) => {
+            if (m.assignment === div.id) divPersonnel.push({ unit: u, member: m, idx });
+          }));
+
+          return (
+            <div 
+              key={div.id}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                const type = e.dataTransfer.getData("type");
+                if (type === "task") onDropTask(e.dataTransfer.getData("taskId"), div.id);
+                else if (type === "personnel") {
+                  const data = JSON.parse(e.dataTransfer.getData("data"));
+                  updateAssignment(data.unitId, data.idx, div.id);
+                }
+              }}
+              style={{ 
+                background: '#0f172a', padding: '15px', borderRadius: '8px', 
+                border: '1px solid #1e293b', marginBottom: '12px', minHeight: '100px' 
               }}
             >
-              <div style={{ fontWeight: 900, marginBottom: "8px" }}>
-                {u.displayId}
-              </div>
-              {u.members.map(
-                (m, idx) =>
-                  m.assignment === "Unassigned" && renderPersonnel(u, m, idx)
+              <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 900, marginBottom: '10px' }}>{div.name.toUpperCase()}</div>
+              {allTasks.filter(t => taskLocations[t.id] === div.id).map(renderTaskCard)}
+              {divPersonnel.length > 0 && (
+                <div style={{ marginTop: '5px' }}>
+                  {!div.isICSRole && <div style={{ fontSize: '9px', color: '#64748b', marginBottom: '5px', fontWeight: 'bold' }}>SUPERVISOR(S)</div>}
+                  {divPersonnel.map(p => renderPersonnelTag(p.unit, p.member, p.idx, 'tactical'))}
+                </div>
               )}
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
-      {/* COLUMN 2: DIVISIONS / IC */}
-      <div
-        style={{
-          borderRight: "1px solid #1e293b",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            padding: "15px",
-            borderBottom: "2px solid #10b981",
-            color: "#10b981",
-            fontWeight: 900,
+      {/* COLUMN 3: TASKS / GROUPS */}
+      <div style={{ padding: '15px', overflowY: 'auto' }}>
+        <h3 style={{ color: '#facc15', borderBottom: '2px solid #facc15', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>TASKS / GROUPS</h3>
+        <div 
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            const type = e.dataTransfer.getData("type");
+            if (type === "task") onDropTask(e.dataTransfer.getData("taskId"), "");
           }}
+          style={{ minHeight: '100%' }}
         >
-          IC / DIVISIONS
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "15px" }}>
-          {divisions.map((div) => (
-            <div
-              key={div.id}
-              style={{
-                background: "#0f172a",
-                padding: "15px",
-                borderRadius: "8px",
-                border: "1px solid #1e293b",
-                marginBottom: "12px",
-                minHeight: "100px",
-              }}
-            >
-              <div
-                style={{
-                  color: "#94a3b8",
-                  fontSize: "12px",
-                  fontWeight: "bold",
-                  marginBottom: "10px",
-                  borderBottom: "1px solid #1e293b",
-                }}
-              >
-                {div.name.toUpperCase()}
-              </div>
-              {/* Show tasks reporting to this division */}
-              {taskList
-                .filter((t) => taskAssignments[t.id] === div.id)
-                .map((t) => (
-                  <div
-                    style={{
-                      padding: "5px",
-                      background: "rgba(56, 189, 248, 0.1)",
-                      borderRadius: "4px",
-                      marginBottom: "4px",
-                      fontSize: "11px",
-                      color: "#38bdf8",
-                    }}
-                  >
-                    → {t.name}
-                  </div>
-                ))}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* COLUMN 3: GROUP TASKS */}
-      <div
-        style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}
-      >
-        <div
-          style={{
-            padding: "15px",
-            borderBottom: "2px solid #facc15",
-            color: "#facc15",
-            fontWeight: 900,
-          }}
-        >
-          GROUP TASKS
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "15px" }}>
-          {taskList.map((task) => renderTaskCard(task))}
+          {allTasks.filter(t => !taskLocations[t.id]).map(renderTaskCard)}
         </div>
       </div>
     </div>
