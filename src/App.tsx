@@ -5,7 +5,7 @@ import Dispatch from "./components/Dispatch";
 import CommandBoard from "./components/CommandBoard";
 import Roster from "./components/Roster";
 
-// --- GLOBAL INTERFACES ---
+// --- INTERFACES ---
 export interface Member {
   role: string;
   name: string;
@@ -39,7 +39,7 @@ export default function App() {
   const [incident, setIncident] = useState<Incident | null>(null);
   const [units, setUnits] = useState<FireUnit[]>([]);
 
-  // REAL-TIME DATABASE SYNC
+  // 1. REAL-TIME SUBSCRIPTION
   useEffect(() => {
     if (!incident?.id) return;
     const channel = supabase
@@ -53,13 +53,12 @@ export default function App() {
           filter: `id=eq.${incident.id}`,
         },
         (payload: any) => {
-          const newState =
-            typeof payload.new.state === "string"
-              ? JSON.parse(payload.new.state)
-              : payload.new.state;
-          if (newState) {
-            setUnits(newState.units || []);
-            if (newState.incident) setIncident(newState.incident);
+          const newState = payload.new.state;
+          const parsedState =
+            typeof newState === "string" ? JSON.parse(newState) : newState;
+          if (parsedState) {
+            setUnits(parsedState.units || []);
+            if (parsedState.incident) setIncident(parsedState.incident);
             if (payload.new.active === false) {
               setIncident(null);
               setView("pre-dispatch");
@@ -73,7 +72,7 @@ export default function App() {
     };
   }, [incident?.id]);
 
-  // --- DYNAMIC UNIT BUILDER ---
+  // 2. UNIT CREATION LOGIC
   const createUnitInstance = async (unitId: string): Promise<FireUnit> => {
     let rawId = unitId.toUpperCase().replace(/\s+/g, "");
     let status = "dispatched";
@@ -83,7 +82,6 @@ export default function App() {
       rawId = rawId.substring(1);
     }
 
-    // UPDATED: Fetching the new station_id and battalion_id columns
     const { data: appData } = await supabase
       .from("apparatus")
       .select("id, roles, type, linked_pairs, station_id, battalion_id")
@@ -96,33 +94,28 @@ export default function App() {
       .eq("id", rawId)
       .maybeSingle();
 
-    // SMART FALLBACKS (If not in database)
     const isTruck = /^(T|Q|S|TW|TK|RS)/.test(rawId);
     const isMedic = /^(M|A|PM)/.test(rawId);
     const isChief = /^(BC|DC|CH|B|STA|EMS)/.test(rawId);
 
-    let defaultRoles = ["Officer", "Driver", "Nozzle", "Backup"];
-    if (isTruck) defaultRoles = ["Officer", "Driver", "Jump", "Jump"];
-    if (isMedic) defaultRoles = ["AIC", "Driver"];
-    if (isChief) defaultRoles = ["Commander"];
-
     const dbRoles: string[] = Array.isArray(appData?.roles)
       ? appData.roles
-      : defaultRoles;
-    const linkedLogic: string[][] = Array.isArray(appData?.linked_pairs)
-      ? appData.linked_pairs
-      : [];
+      : isMedic
+      ? ["AIC", "Driver"]
+      : ["Officer", "Driver", "Nozzle", "Backup"];
 
     return {
       id: rawId,
-      status: status,
+      status,
       type:
         appData?.type ||
         (isMedic ? "MEDIC" : isTruck ? "TRUCK" : isChief ? "CHIEF" : "ENGINE"),
       assignment: "STAGING",
       station_id: appData?.station_id || "",
       battalion_id: appData?.battalion_id || "",
-      linked_logic: linkedLogic,
+      linked_logic: Array.isArray(appData?.linked_pairs)
+        ? appData.linked_pairs
+        : [],
       members: dbRoles.map((role: string) => {
         const p = rosterData?.members?.find((m: any) => m.role === role);
         return {
@@ -135,10 +128,9 @@ export default function App() {
     };
   };
 
-  // --- CAD PARSING ---
+  // 3. DISPATCH HANDLER
   const handleStartIncident = async (notes: string) => {
     const clean = notes.replace(/\n/g, " ").replace(/\s\s+/g, " ");
-
     const boxMatch = clean.match(/BOX:\s*([\d-]+)/i);
     const callMatch = clean.match(/CALL:\s*(.*?)(?=\s*(ADDR:|UNIT:|INFO:|$))/i);
     const addrMatch = clean.match(
@@ -147,19 +139,12 @@ export default function App() {
     const unitMatch = clean.match(
       /UNIT:\s*(.*?)(?=\s*(INFO:|STA:|DATE:|TIME:|GPS:|$))/i
     );
-    const infoMatch = clean.match(
-      /INFO:\s*(.*?)(?=\s*(DATE:|TIME:|GPS:|ID:|$))/i
-    );
-    const dateMatch = clean.match(/DATE:\s*([\d-]+)/i);
-    const timeMatch = clean.match(/TIME:\s*([\d:]+)/i);
     const idMatch = clean.match(/ID:\s*([A-Z0-9-]+)/i);
 
     const rawUnits = unitMatch ? unitMatch[1] : "";
-    const unitList = rawUnits.split(/[\s,]+/).filter((u) => {
-      // IGNORE STAXXA format (e.g., STA08A)
-      const isStationCode = /^STA\d+[A-Z]?$/i.test(u);
-      return u.length > 1 && !isStationCode;
-    });
+    const unitList = rawUnits
+      .split(/[\s,]+/)
+      .filter((u) => u.length > 1 && !/^STA\d/i.test(u));
 
     const initialUnits = await Promise.all(
       unitList.map((id) => createUnitInstance(id))
@@ -169,20 +154,16 @@ export default function App() {
     const initialIncident: Incident = {
       id: incidentId,
       box: boxMatch ? boxMatch[1] : "---",
-      call: callMatch ? callMatch[1].trim() : "Unknown Dispatch",
+      call: callMatch ? callMatch[1].trim() : "Unknown Call",
       address: addrMatch ? addrMatch[1].trim() : "Unknown Address",
       active: true,
-      notes: infoMatch ? infoMatch[1].trim() : "",
-      timestamp: `${dateMatch ? dateMatch[1] : ""} ${
-        timeMatch ? timeMatch[1] : ""
-      }`.trim(),
+      notes: clean,
     };
 
     setUnits(initialUnits);
     setIncident(initialIncident);
     setView("dispatch");
 
-    // Persist to Supabase
     await supabase.from("incidents").insert([
       {
         id: incidentId,
@@ -195,7 +176,7 @@ export default function App() {
   };
 
   const handleEndIncident = async () => {
-    if (!incident || !window.confirm("End incident and clear boards?")) return;
+    if (!incident) return;
     await supabase
       .from("incidents")
       .update({ active: false })
@@ -220,7 +201,12 @@ export default function App() {
 
   return (
     <div
-      style={{ backgroundColor: "#060b13", minHeight: "100vh", color: "white" }}
+      style={{
+        backgroundColor: "#060b13",
+        minHeight: "100vh",
+        color: "white",
+        fontFamily: "sans-serif",
+      }}
     >
       <nav
         style={{

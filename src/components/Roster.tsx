@@ -1,160 +1,86 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
 
-interface RosterMember {
-  role: string;
-  name: string;
-  rank: string;
-}
-
-interface UnitRoster {
-  id: string;
-  members: RosterMember[];
-  station_id: string;
-  battalion_id: string;
-}
-
 export default function Roster() {
-  const [rosters, setRosters] = useState<UnitRoster[]>([]);
+  // --- STATE ---
+  const [hierarchy, setHierarchy] = useState<any>({});
+  const [expandedBN, setExpandedBN] = useState<string[]>([]);
+  const [expandedST, setExpandedST] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Mapping for Battalion Labels
+  const bnLabels: Record<string, string> = {
+    B1: "Battalion 1 Central",
+    B2: "Battalion 2 West",
+    B3: "Battalion 3 East",
+    B4: "Battalion 4 North",
+    B5: "Battalion 5 Southeast",
+  };
 
   useEffect(() => {
     fetchRosters();
   }, []);
 
+  // --- DATA FETCHING ---
   const fetchRosters = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      setErrorMsg(null);
-
-      // 1. Fetch apparatus with the new ID columns
-      const { data: appData, error: appError } = await supabase
+      const { data, error } = await supabase
         .from("apparatus")
         .select("id, roles, station_id, battalion_id");
 
-      if (appError) throw appError;
+      if (error) throw error;
 
-      // 2. Fetch saved rosters
-      const { data: rosterData, error: rosterError } = await supabase
-        .from("rosters")
-        .select("id, members");
+      if (data) {
+        const nested: any = {};
 
-      if (rosterError) throw rosterError;
+        data.forEach((unit: any) => {
+          // Fallbacks to prevent crashes
+          const bn = unit.battalion_id || "UNASSIGNED";
+          const st = unit.station_id || "Misc";
 
-      if (appData) {
-        const combined = appData.map((app) => {
-          const existing = rosterData?.find((r) => r.id === app.id);
+          if (!nested[bn]) nested[bn] = {};
+          if (!nested[bn][st]) nested[bn][st] = [];
 
-          let membersArray: RosterMember[] = [];
-
-          if (existing && Array.isArray(existing.members)) {
-            membersArray = existing.members;
-          } else {
-            // Build from apparatus roles if no roster saved
-            const rawRoles = app.roles;
-            const rolesList = Array.isArray(rawRoles)
-              ? rawRoles
-              : typeof rawRoles === "string"
-              ? JSON.parse(rawRoles)
-              : [];
-
-            membersArray = rolesList.map((r: string) => ({
-              role: r || "Member",
-              name: "",
-              rank: "",
-            }));
-          }
-
-          return {
-            id: app.id || "Unknown",
-            members: membersArray,
-            station_id: app.station_id || "99", // Fallback for sorting
-            battalion_id: app.battalion_id || "UNASSIGNED",
-          };
-        });
-
-        // 3. MULTI-LEVEL SORT: Battalion -> Station -> Unit ID
-        const sorted = combined.sort((a, b) => {
-          // Sort by Battalion (B1, B2, etc.)
-          const bSort = a.battalion_id.localeCompare(b.battalion_id);
-          if (bSort !== 0) return bSort;
-
-          // Sort by Station Number (Numeric)
-          const sSort = a.station_id.localeCompare(b.station_id, undefined, {
-            numeric: true,
+          nested[bn][st].push({
+            ...unit,
+            roles: Array.isArray(unit.roles) ? unit.roles : [],
           });
-          if (sSort !== 0) return sSort;
-
-          // Final sort by Unit ID
-          return a.id.localeCompare(b.id, undefined, { numeric: true });
         });
 
-        setRosters(sorted);
+        // Sort units inside the station buckets
+        Object.keys(nested).forEach((bn) => {
+          Object.keys(nested[bn]).forEach((st) => {
+            nested[bn][st].sort((a: any, b: any) =>
+              a.id.localeCompare(b.id, undefined, { numeric: true })
+            );
+          });
+        });
+
+        setHierarchy(nested);
       }
-    } catch (err: any) {
-      console.error("Critical Roster Error:", err);
-      setErrorMsg(err.message);
+    } catch (err) {
+      console.error("Error building roster hierarchy:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  const updateRoster = async (
-    unitId: string,
-    memberIdx: number,
-    field: string,
-    value: string
-  ) => {
-    const nextRosters = rosters.map((r) => {
-      if (r.id !== unitId) return r;
-      const nextMembers = [...r.members];
-      nextMembers[memberIdx] = { ...nextMembers[memberIdx], [field]: value };
-      return { ...r, members: nextMembers };
-    });
-
-    setRosters(nextRosters);
-
-    const updatedUnit = nextRosters.find((r) => r.id === unitId);
-    if (updatedUnit) {
-      await supabase.from("rosters").upsert({
-        id: unitId,
-        members: updatedUnit.members,
-        updated_at: new Date(),
-      });
-    }
+  // --- TOGGLE HANDLERS ---
+  const toggleBN = (bn: string) => {
+    setExpandedBN((prev) =>
+      prev.includes(bn) ? prev.filter((i) => i !== bn) : [...prev, bn]
+    );
   };
 
-  const filteredRosters = (rosters || []).filter(
-    (r) =>
-      r.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.station_id.includes(searchTerm)
-  );
-
-  if (errorMsg)
-    return (
-      <div
-        style={{
-          padding: "50px",
-          color: "#f87171",
-          textAlign: "center",
-          background: "#060b13",
-          minHeight: "100vh",
-        }}
-      >
-        <h2>Roster Error</h2>
-        <p>{errorMsg}</p>
-        <button
-          onClick={fetchRosters}
-          style={{ padding: "10px 20px", cursor: "pointer" }}
-        >
-          Retry Load
-        </button>
-      </div>
+  const toggleST = (stKey: string) => {
+    setExpandedST((prev) =>
+      prev.includes(stKey) ? prev.filter((i) => i !== stKey) : [...prev, stKey]
     );
+  };
 
-  if (loading)
+  if (loading) {
     return (
       <div
         style={{
@@ -165,176 +91,188 @@ export default function Roster() {
           minHeight: "100vh",
         }}
       >
-        Loading Personnel Database...
+        Organizing Station Buckets...
       </div>
     );
+  }
 
   return (
-    <div style={{ padding: "30px", background: "#060b13", minHeight: "100vh" }}>
+    <div
+      style={{
+        padding: "30px",
+        background: "#060b13",
+        minHeight: "100vh",
+        color: "white",
+        fontFamily: "sans-serif",
+      }}
+    >
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "flex-end",
+          alignItems: "center",
           marginBottom: "30px",
         }}
       >
-        <div>
-          <h2 style={{ color: "white", margin: 0 }}>Apparatus Rosters</h2>
-          <p
-            style={{
-              color: "#38bdf8",
-              fontSize: "12px",
-              fontWeight: "bold",
-              marginTop: "5px",
-            }}
-          >
-            ORGANIZED BY BATTALION & STATION
-          </p>
+        <h2 style={{ margin: 0 }}>BCFD Command Roster</h2>
+        <div style={{ color: "#64748b", fontSize: "12px" }}>
+          8:40 AM | Morning Shift
         </div>
-        <input
-          type="text"
-          placeholder="Filter Unit or Station..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={{
-            padding: "12px 20px",
-            borderRadius: "8px",
-            border: "1px solid #1e293b",
-            background: "#0f172a",
-            color: "white",
-            width: "350px",
-            outline: "none",
-          }}
-        />
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
-          gap: "20px",
-        }}
-      >
-        {filteredRosters.map((roster) => (
+      {Object.keys(hierarchy)
+        .sort()
+        .map((bn) => (
           <div
-            key={roster.id}
+            key={bn}
             style={{
-              background: "#0f172a",
-              borderRadius: "10px",
+              marginBottom: "20px",
               border: "1px solid #1e293b",
+              borderRadius: "8px",
               overflow: "hidden",
             }}
           >
+            {/* BATTALION LEVEL HEADER */}
             <div
+              onClick={() => toggleBN(bn)}
               style={{
                 background: "#1e293b",
-                padding: "10px 15px",
+                padding: "15px 20px",
+                cursor: "pointer",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
               }}
             >
-              <div>
-                <span
-                  style={{
-                    fontWeight: "bold",
-                    color: "#38bdf8",
-                    fontSize: "18px",
-                  }}
-                >
-                  {roster.id}
-                </span>
-                <span
-                  style={{
-                    color: "#64748b",
-                    fontSize: "10px",
-                    marginLeft: "10px",
-                  }}
-                >
-                  STATION {roster.station_id}
-                </span>
-              </div>
               <span
                 style={{
-                  fontSize: "10px",
-                  color: "#facc15",
                   fontWeight: "bold",
-                  background: "#060b13",
-                  padding: "2px 6px",
-                  borderRadius: "4px",
+                  color: "#facc15",
+                  fontSize: "1.1rem",
                 }}
               >
-                {roster.battalion_id}
+                {bnLabels[bn] || bn}
+              </span>
+              <span style={{ fontSize: "10px", color: "#94a3b8" }}>
+                {expandedBN.includes(bn) ? "▼ COLLAPSE" : "▶ EXPAND"}
               </span>
             </div>
 
-            <div style={{ padding: "15px" }}>
-              {roster.members.map((m, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "100px 1fr",
-                    gap: "8px",
-                    marginBottom: "10px",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: "10px",
-                      color: "#94a3b8",
-                      alignSelf: "center",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {(m.role || "Member").toUpperCase()}
-                  </div>
-                  <div style={{ display: "flex", gap: "4px" }}>
-                    <select
-                      value={m.rank || ""}
-                      onChange={(e) =>
-                        updateRoster(roster.id, idx, "rank", e.target.value)
-                      }
-                      style={{
-                        background: "#060b13",
-                        border: "1px solid #334155",
-                        color: "white",
-                        borderRadius: "4px",
-                        fontSize: "11px",
-                      }}
-                    >
-                      <option value="">RANK</option>
-                      <option value="CHIEF">CHIEF</option>
-                      <option value="CAPTAIN">CAPT</option>
-                      <option value="LT">LT</option>
-                      <option value="PM">PM</option>
-                      <option value="FF">FF</option>
-                    </select>
-                    <input
-                      type="text"
-                      placeholder="Name"
-                      value={m.name || ""}
-                      onChange={(e) =>
-                        updateRoster(roster.id, idx, "name", e.target.value)
-                      }
-                      style={{
-                        flex: 1,
-                        background: "#060b13",
-                        border: "1px solid #334155",
-                        borderRadius: "4px",
-                        padding: "8px",
-                        color: "white",
-                        fontSize: "13px",
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+            {/* STATION LEVEL (Only shows if Battalion is expanded) */}
+            {expandedBN.includes(bn) && (
+              <div style={{ padding: "10px", background: "#0f172a" }}>
+                {Object.keys(hierarchy[bn])
+                  .sort((a, b) =>
+                    a.localeCompare(b, undefined, { numeric: true })
+                  )
+                  .map((st) => {
+                    const stKey = `${bn}-${st}`;
+                    return (
+                      <div
+                        key={stKey}
+                        style={{
+                          marginBottom: "10px",
+                          border: "1px solid #334155",
+                          borderRadius: "6px",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          onClick={() => toggleST(stKey)}
+                          style={{
+                            background: "#060b13",
+                            padding: "10px 15px",
+                            cursor: "pointer",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: "14px",
+                            alignItems: "center",
+                          }}
+                        >
+                          <span
+                            style={{ color: "#38bdf8", fontWeight: "bold" }}
+                          >
+                            Station {st}
+                          </span>
+                          <span style={{ fontSize: "14px", color: "#334155" }}>
+                            {expandedST.includes(stKey) ? "−" : "+"}
+                          </span>
+                        </div>
+
+                        {/* APPARATUS LEVEL (Only shows if Station is expanded) */}
+                        {expandedST.includes(stKey) && (
+                          <div
+                            style={{
+                              padding: "15px",
+                              display: "grid",
+                              gridTemplateColumns:
+                                "repeat(auto-fill, minmax(280px, 1fr))",
+                              gap: "12px",
+                              background: "#0f172a",
+                            }}
+                          >
+                            {hierarchy[bn][st].map((unit: any) => (
+                              <div
+                                key={unit.id}
+                                style={{
+                                  background: "#111827",
+                                  border: "1px solid #1e293b",
+                                  padding: "12px",
+                                  borderRadius: "6px",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontWeight: "bold",
+                                    color: "white",
+                                    borderBottom: "1px solid #1e293b",
+                                    marginBottom: "8px",
+                                    paddingBottom: "4px",
+                                    fontSize: "16px",
+                                  }}
+                                >
+                                  {unit.id}
+                                </div>
+                                {unit.roles?.map((role: string, i: number) => (
+                                  <div
+                                    key={i}
+                                    style={{
+                                      fontSize: "11px",
+                                      color: "#94a3b8",
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      marginBottom: "4px",
+                                    }}
+                                  >
+                                    <span
+                                      style={{ textTransform: "uppercase" }}
+                                    >
+                                      {role}
+                                    </span>
+                                    <span style={{ color: "#334155" }}>
+                                      [Unassigned]
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
           </div>
         ))}
-      </div>
+
+      {Object.keys(hierarchy).length === 0 && (
+        <div
+          style={{ textAlign: "center", marginTop: "50px", color: "#64748b" }}
+        >
+          No units found. Add rows to the 'apparatus' table to begin.
+        </div>
+      )}
     </div>
   );
 }
