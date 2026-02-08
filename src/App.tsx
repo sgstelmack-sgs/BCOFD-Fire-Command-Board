@@ -5,6 +5,13 @@ import Dispatch from "./components/Dispatch";
 import CommandBoard from "./components/CommandBoard";
 import Roster from "./components/Roster";
 
+/**
+ * CAPTAIN'S NOTES: ROSTER-FIRST ARCHITECTURE
+ * - Roster Boss: If a roster exists, it defines the crew size and roles (Fixes Medic 2-spot vs 4-spot issue).
+ * - Partial Match: Bridges the gap between "Officer" and "Officer (P1)".
+ * - Real-time: Syncs state across all incident tablets.
+ */
+
 export interface FireUnit {
   id: string;
   displayId: string;
@@ -26,14 +33,32 @@ export interface Incident {
   active: boolean;
 }
 
-// MASTER TACTICAL COLORS
 export const getUnitColor = (type: string) => {
   const t = type?.toUpperCase() || "";
-  if (t === "ENGINE") return "#1e40af"; // Blue
-  if (t === "TRUCK" || t === "TOWER") return "#991b1b"; // Red
-  if (t === "SQUAD" || t === "RESCUE") return "#166534"; // Green
-  if (t === "CHIEF" || t === "BC") return "#ca8a04"; // Gold
-  if (t === "MEDIC" || t === "AMBULANCE") return "#c2410c"; // Orange
+  if (t.includes("ENGINE") || t.startsWith("E")) return "#1e40af"; // Blue
+  if (t.includes("TRUCK") || t.includes("TOWER") || t.startsWith("T"))
+    return "#991b1b"; // Red
+  if (
+    t.includes("SQUAD") ||
+    t.includes("RESCUE") ||
+    t.startsWith("SQ") ||
+    t.startsWith("R")
+  )
+    return "#166534"; // Green
+  if (
+    t.includes("CHIEF") ||
+    t.includes("BC") ||
+    t.includes("DC") ||
+    t.startsWith("B")
+  )
+    return "#ca8a04"; // Gold
+  if (
+    t.includes("MEDIC") ||
+    t.includes("AMBULANCE") ||
+    t.startsWith("M") ||
+    t.startsWith("A")
+  )
+    return "#c2410c"; // Orange
   return "#475569";
 };
 
@@ -110,7 +135,7 @@ export default function App() {
             .eq("unit_id", lookupId)
             .maybeSingle();
 
-          // LOG MISSING UNIT
+          // Logging missing units
           if (!appData && !isGhost) {
             supabase
               .from("missing_apparatus")
@@ -129,14 +154,35 @@ export default function App() {
               .then();
           }
 
-          // TIGHTER SHORTHAND LOGIC
           let tacticalType = appData?.type || "OTHER";
           if (tacticalType === "OTHER") {
             if (/^E\d/.test(lookupId)) tacticalType = "ENGINE";
             else if (/^T\d|^TW\d|^L\d/.test(lookupId)) tacticalType = "TRUCK";
             else if (/^M\d|^A\d/.test(lookupId)) tacticalType = "MEDIC";
-            else if (/^SQ\d|^R\d/.test(lookupId)) tacticalType = "SQUAD";
-            else if (/^B\d|^D\d|^CH\d/.test(lookupId)) tacticalType = "CHIEF";
+          }
+
+          // --- THE ROSTER-FIRST INJECTOR ---
+          let members = [];
+          if (rosterData?.members && rosterData.members.length > 0) {
+            // ROSTER IS BOSS: Show exactly what is saved, no extra spots.
+            members = rosterData.members.map((m: any) => ({
+              role: m.role,
+              name: m.name || `${lookupId} ${m.role}`,
+              assignment: "Unassigned",
+            }));
+          } else {
+            // FALLBACK: Use apparatus defaults if no roster is set.
+            const defaultRoles = appData?.roles || [
+              "Officer",
+              "Driver",
+              "Nozzle",
+              "Backup",
+            ];
+            members = defaultRoles.map((role: string) => ({
+              role: role,
+              name: `${lookupId} ${role}`,
+              assignment: "Unassigned",
+            }));
           }
 
           return {
@@ -146,18 +192,7 @@ export default function App() {
             type: tacticalType,
             assignment: "STAGING",
             isGhosted: isGhost,
-            members: (
-              appData?.roles || ["Officer", "Driver", "Nozzle", "Backup"]
-            ).map((role: string) => {
-              const saved = rosterData?.members?.find(
-                (m: any) => m.role === role
-              );
-              return {
-                role,
-                name: saved?.name || `${lookupId} ${role}`,
-                assignment: "Unassigned",
-              };
-            }),
+            members,
           };
         })
       );
@@ -242,6 +277,17 @@ export default function App() {
           <span style={{ color: "#ef4444", fontWeight: 900, fontSize: "20px" }}>
             BCoFD
           </span>
+          <span
+            style={{
+              color: "#f8fafc",
+              fontWeight: 600,
+              fontSize: "14px",
+              marginLeft: "10px",
+              opacity: 0.8,
+            }}
+          >
+            Command
+          </span>
         </div>
         <button
           style={getTabStyle("pre-dispatch")}
@@ -262,13 +308,14 @@ export default function App() {
             style={getTabStyle("command")}
             onClick={() => setView("command")}
           >
-            Command
+            Command Board
           </button>
         )}
         <button style={getTabStyle("roster")} onClick={() => setView("roster")}>
           Roster
         </button>
       </nav>
+
       <main style={{ height: "calc(100vh - 56px)" }}>
         {view === "pre-dispatch" && (
           <PreDispatch
@@ -278,10 +325,10 @@ export default function App() {
             setView={setView}
           />
         )}
-        {view === "dispatch" && incident && (
+        {incident && view === "dispatch" && (
           <Dispatch incident={incident} units={units} syncState={syncState} />
         )}
-        {view === "command" && incident && (
+        {incident && view === "command" && (
           <CommandBoard
             incident={incident}
             units={units}
