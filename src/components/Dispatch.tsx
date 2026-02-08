@@ -3,6 +3,11 @@ import { FireUnit, getUnitColor } from "../App";
 
 export default function Dispatch({ incident, units, syncState }: any) {
   const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
+  const [editingMember, setEditingMember] = useState<{
+    unitId: string;
+    idx: number;
+  } | null>(null);
+
   const activeUnits = units.filter((u: FireUnit) => !u.isGhosted);
   const ghostedUnits = units.filter((u: FireUnit) => u.isGhosted);
 
@@ -11,6 +16,20 @@ export default function Dispatch({ incident, units, syncState }: any) {
       u.id === unitId ? { ...u, status, isGhosted: false } : u
     );
     syncState({ units: nextUnits });
+  };
+
+  // NEW: Function to handle on-the-fly name changes
+  const handleNameChange = (unitId: string, idx: number, newName: string) => {
+    const nextUnits = units.map((u: FireUnit) => {
+      if (u.id === unitId) {
+        const nextMembers = [...u.members];
+        nextMembers[idx] = { ...nextMembers[idx], name: newName };
+        return { ...u, members: nextMembers };
+      }
+      return u;
+    });
+    syncState({ units: nextUnits });
+    setEditingMember(null);
   };
 
   const renderUnitCard = (unit: FireUnit) => {
@@ -51,35 +70,13 @@ export default function Dispatch({ incident, units, syncState }: any) {
                 {isExpanded ? "▼" : "▶"}
               </span>
               <span
-                style={{
-                  fontSize: "26px",
-                  fontWeight: 900,
-                  color: "#f8fafc",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                }}
+                style={{ fontSize: "26px", fontWeight: 900, color: "#f8fafc" }}
               >
-                {unit.displayId}
-                {unit.isGhosted && (
-                  <span
-                    title="Ghost Unit"
-                    style={{ color: "#94a3b8", fontSize: "18px" }}
-                  >
-                    👻
-                  </span>
-                )}
+                {unit.displayId} {unit.isGhosted && "👻"}
               </span>
             </div>
             <span
-              style={{
-                fontSize: "11px",
-                fontWeight: "bold",
-                color: unitColor,
-                background: "rgba(0,0,0,0.3)",
-                padding: "2px 8px",
-                borderRadius: "4px",
-              }}
+              style={{ fontSize: "11px", fontWeight: "bold", color: unitColor }}
             >
               {unit.type}
             </span>
@@ -102,7 +99,7 @@ export default function Dispatch({ incident, units, syncState }: any) {
                     display: "flex",
                     justifyContent: "space-between",
                     fontSize: "13px",
-                    padding: "4px 0",
+                    padding: "6px 0",
                     borderBottom:
                       i === unit.members.length - 1
                         ? "none"
@@ -112,7 +109,43 @@ export default function Dispatch({ incident, units, syncState }: any) {
                   <span style={{ color: "#64748b", fontWeight: "bold" }}>
                     {m.role}
                   </span>
-                  <span style={{ color: "#f1f5f9" }}>{m.name}</span>
+
+                  {/* EDITABLE NAME LOGIC */}
+                  {editingMember?.unitId === unit.id &&
+                  editingMember?.idx === i ? (
+                    <input
+                      autoFocus
+                      defaultValue={m.name}
+                      onBlur={(e) =>
+                        handleNameChange(unit.id, i, e.target.value)
+                      }
+                      onKeyDown={(e) =>
+                        e.key === "Enter" &&
+                        handleNameChange(unit.id, i, (e.target as any).value)
+                      }
+                      style={{
+                        background: "#1e293b",
+                        color: "#38bdf8",
+                        border: "1px solid #38bdf8",
+                        borderRadius: "4px",
+                        padding: "0 5px",
+                        width: "60%",
+                      }}
+                    />
+                  ) : (
+                    <span
+                      onClick={() =>
+                        setEditingMember({ unitId: unit.id, idx: i })
+                      }
+                      style={{
+                        color: "#38bdf8",
+                        cursor: "pointer",
+                        borderBottom: "1px dashed #38bdf8",
+                      }}
+                    >
+                      {m.name}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -155,11 +188,9 @@ export default function Dispatch({ incident, units, syncState }: any) {
     );
   };
 
-  const encodedAddress = encodeURIComponent(
-    `${incident.address}, Baltimore County, MD`
-  );
-  // Fixed Google Maps Satellite Embed
-  const mapUrl = `https://maps.google.com/maps?q=$${encodedAddress}&t=k&z=20&ie=UTF8&iwloc=&output=embed`;
+  const mapUrl = `https://maps.google.com/maps?q=${encodeURIComponent(
+    incident.address + ", Baltimore County, MD"
+  )}&t=k&z=20&ie=UTF8&iwloc=&output=embed`;
 
   return (
     <div
