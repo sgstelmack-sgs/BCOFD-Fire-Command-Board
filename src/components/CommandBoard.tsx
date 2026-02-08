@@ -4,209 +4,267 @@ import { FireUnit, getUnitColor } from '../App';
 const normalize = (str: string) => str?.toLowerCase().replace(/[-\s]/g, "") || "";
 
 export default function CommandBoard({ incident, units, syncState }: any) {
-  // --- HIERARCHY STATE ---
-  const [taskLocations, setTaskLocations] = useState<Record<string, string>>({}); 
-  const [divLocations, setDivLocations] = useState<Record<string, string>>({});   
-  const [branchLocations, setBranchLocations] = useState<Record<string, string>>({}); 
+  // --- 1. BUILDING HIERARCHY LOGIC ---
+  const sortDivisions = (divs: any[]) => {
+    const getRank = (name: string) => {
+      const norm = normalize(name);
+      if (norm.includes("roof")) return 0;
+      if (norm.includes("floor5") || norm === "division5") return 1;
+      if (norm.includes("floor4") || norm === "division4") return 2;
+      if (norm.includes("floor3") || norm === "division3") return 3;
+      if (norm.includes("division2") || norm.includes("floor2")) return 4;
+      if (norm.includes("division1") || norm.includes("floor1")) return 5;
+      if (norm === "basement") return 6;
+      if (norm === "basement2") return 7;
+      if (norm === "basement3") return 8;
+      if (norm.includes("alpha")) return 10;
+      if (norm.includes("bravo")) return 11;
+      if (norm.includes("charlie")) return 12;
+      if (norm.includes("delta")) return 13;
+      if (norm.includes("search")) return 20;
+      if (norm.includes("rit")) return 30;
+      return 99; 
+    };
+    return [...divs].sort((a, b) => getRank(a.name) - getRank(b.name));
+  };
 
-  // --- BUCKET STATE ---
+  // --- 2. STATE ---
+  const [taskLocations, setTaskLocations] = useState<Record<string, string>>({}); 
   const [activeCommand, setActiveCommand] = useState([{ id: 'ic', name: 'Incident Command' }, { id: 'safety', name: 'Safety Officer' }]);
   const [activeGeneral, setActiveGeneral] = useState([{ id: 'ops-section', name: 'Operations Section' }]);
   const [activeBranches, setActiveBranches] = useState<any[]>([]);
-  const [activeDivisions, setActiveDivisions] = useState([{ id: 'div-1', name: 'Division 1' }]);
+  const [activeDivisions, setActiveDivisions] = useState(sortDivisions([
+    { id: 'group-roof', name: 'Roof Group' },
+    { id: 'div-2', name: 'Division 2' },
+    { id: 'div-1', name: 'Division 1' },
+    { id: 'div-basement', name: 'Basement' },
+    { id: 'div-a', name: 'Division Alpha' },
+    { id: 'div-c', name: 'Division Charlie' },
+    { id: 'group-search', name: 'Search and Rescue' },
+    { id: 'group-rit', name: 'RIT' }
+  ]));
   
-  // --- TASK FACTORY STATE ---
   const [allTasks, setAllTasks] = useState([
     { id: 'fire-attack-1', name: 'Fire Attack 1', base: 'Fire Attack' },
     { id: 'search-rescue-1', name: 'Search & Rescue 1', base: 'Search & Rescue' },
     { id: 'ventilation-1', name: 'Ventilation 1', base: 'Ventilation' },
     { id: 'water-supply-1', name: 'Water Supply 1', base: 'Water Supply' },
+    { id: 'utilities-1', name: 'Utilities 1', base: 'Utilities' },
+    { id: 'rit-task-1', name: 'RIT 1', base: 'RIT' },
   ]);
 
-  const [visible, setVisible] = useState({ command: true, general: true, branches: true, divisions: true });
-
-  // --- TACTICAL LOGIC ---
-  const updateAssignment = (unitId: string, memberIdx: number, newAssignment: string) => {
-    const nextUnits = units.map((u: FireUnit) => {
-      if (u.id === unitId) {
-        const nextMembers = [...u.members];
-        const dragged = nextMembers[memberIdx];
-        nextMembers[memberIdx] = { ...dragged, assignment: newAssignment };
-
-        // Tethering logic
-        const draggedRoleNorm = normalize(dragged.role);
-        const pair = u.linkedPairs?.find(p => p.some(r => draggedRoleNorm.includes(normalize(r))));
-        const isBroken = (u.brokenLinks || []).some(p => p.includes(dragged.role));
-
-        if (pair && !isBroken) {
-          const partnerKey = pair.find(r => !draggedRoleNorm.includes(normalize(r)));
-          const pIdx = nextMembers.findIndex(m => normalize(m.role).includes(normalize(partnerKey || "")));
-          if (pIdx !== -1 && (nextMembers[pIdx].assignment === "Unassigned" || nextMembers[pIdx].assignment === "STAGING")) {
-            nextMembers[pIdx].assignment = newAssignment;
-          }
-        }
-        return { ...u, members: nextMembers };
-      }
-      return u;
-    });
-    syncState({ units: nextUnits });
+  const menuOptions = {
+    command: ["Public Information Officer", "Safety Officer", "Liaison Officer"],
+    general: ["Operations Section Chief", "Planning Section Chief", "Logistics Section Chief", "Finance Section Chief"],
+    branches: ["Fire Branch", "Medical Branch", "Hazmat Branch", "Rescue Branch", "RIT Branch"],
+    divisions: ["Division 3", "Division 4", "Division Bravo", "Division Delta", "Basement 2", "Basement 3", "Roof Group", "RIT"]
   };
 
-  const handleTaskDeployment = (taskId: string, newLocation: string) => {
-    setTaskLocations(prev => ({ ...prev, [taskId]: newLocation }));
-
-    if (newLocation !== "") {
-      const deployedTask = allTasks.find(t => t.id === taskId);
-      if (deployedTask?.base) {
-        const count = allTasks.filter(t => t.base === deployedTask.base).length;
-        const nextNum = count + 1;
-        const newId = `${deployedTask.base.toLowerCase().replace(/\s+/g, '-')}-${nextNum}`;
-        
-        // Safety check to prevent duplicate IDs which cause white screens
-        if (!allTasks.find(t => t.id === newId)) {
-          setAllTasks(prev => [...prev, { 
-            id: newId, 
-            name: `${deployedTask.base} ${nextNum}`, 
-            base: deployedTask.base 
-          }]);
-        }
-      }
+  // --- 3. LOGIC ENGINES ---
+  const getAssignmentLabel = (id: string) => {
+    if (id === "Unassigned") return null;
+    const task = allTasks.find(t => t.id === id);
+    if (task) {
+      const parentId = taskLocations[id];
+      const div = activeDivisions.find(d => d.id === parentId);
+      return div ? `${div.name} / ${task.name}` : task.name;
     }
+    const other = [...activeCommand, ...activeGeneral, ...activeBranches, ...activeDivisions].find(item => item.id === id);
+    return other ? other.name : null;
+  };
+
+  const spawnNextDivision = (currentName: string) => {
+    const norm = normalize(currentName);
+    let nextName = "";
+    if (norm === "division1" || norm === "floor1") nextName = "Division 2";
+    else if (norm === "division2" || norm === "floor2") nextName = "Division 3";
+    else if (norm === "division3" || norm === "floor3") nextName = "Division 4";
+    else if (norm === "basement") nextName = "Basement 2";
+    else if (norm === "basement2") nextName = "Basement 3";
+    else if (norm === "alpha" || norm === "divisionalpha") nextName = "Division Bravo";
+    else if (norm === "charlie" || norm === "divisioncharlie") nextName = "Division Delta";
+
+    const isDup = activeDivisions.some(d => normalize(d.name) === normalize(nextName));
+    if (!nextName || isDup) nextName = prompt(isDup ? `${nextName} exists. Name unit:` : "New Unit Name:") || "";
+    if (nextName) setActiveDivisions(prev => sortDivisions([...prev, { id: `id-${Date.now()}`, name: nextName }]));
+  };
+
+  const removeBucket = (id: string, section: string) => {
+    const nextUnits = (units || []).map((u: FireUnit) => ({
+      ...u,
+      members: (u.members || []).map(m => m.assignment === id ? { ...m, assignment: "Unassigned" } : m)
+    }));
+    syncState({ units: nextUnits });
+    setTaskLocations(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(k => { if (next[k] === id) delete next[k]; });
+      return next;
+    });
+    if (section === 'command') setActiveCommand(p => p.filter(b => b.id !== id));
+    else if (section === 'general') setActiveGeneral(p => p.filter(b => b.id !== id));
+    else if (section === 'branches') setActiveBranches(p => p.filter(b => b.id !== id));
+    else if (section === 'divisions') setActiveDivisions(p => p.filter(b => b.id !== id));
   };
 
   const moveTask = (taskId: string, direction: 'up' | 'down') => {
-    const index = allTasks.findIndex(t => t.id === taskId);
-    if (index === -1) return;
-    if ((direction === 'up' && index === 0) || (direction === 'down' && index === allTasks.length - 1)) return;
-    
-    const newTasks = [...allTasks];
-    const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    [newTasks[index], newTasks[swapIndex]] = [newTasks[swapIndex], newTasks[index]];
-    setAllTasks(newTasks);
+    setAllTasks(prev => {
+      const idx = prev.findIndex(t => t.id === taskId);
+      if (idx === -1 || (direction === 'up' && idx === 0) || (direction === 'down' && idx === prev.length - 1)) return prev;
+      const next = [...prev];
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+      return next;
+    });
   };
 
-  // --- RENDERING HELPERS ---
+  // --- 4. RENDERERS ---
   const renderPersonnelTag = (unit: FireUnit, member: any, idx: number, context: 'staffing' | 'tactical') => {
-    const unitColor = getUnitColor(unit.type);
+    const color = getUnitColor(unit.type);
+    const label = getAssignmentLabel(member.assignment);
     return (
-      <div 
-        key={`${unit.id}-${idx}`} draggable
-        onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "personnel"); e.dataTransfer.setData("data", JSON.stringify({ unitId: unit.id, idx })); }}
-        style={{ background: '#0f172a', margin: '2px 0', padding: '6px', borderRadius: '4px', borderLeft: `4px solid ${unitColor}`, fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'grab', border: '1px solid #1e293b', color: '#f8fafc' }}
-      >
-        <span><strong style={{ color: unitColor }}>{unit.displayId}</strong> <span style={{ color: '#94a3b8', fontSize: '10px' }}>{member.role}</span> {member.name}</span>
-        {context === 'tactical' && <button onClick={() => updateAssignment(unit.id, idx, "Unassigned")} style={{ background: '#991b1b', border: 'none', color: 'white', borderRadius: '2px', padding: '0 4px', cursor: 'pointer' }}>-</button>}
+      <div key={`${unit.id}-${idx}`} draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "personnel"); e.dataTransfer.setData("data", JSON.stringify({ unitId: unit.id, idx })); }}
+        style={{ background: '#111827', margin: '2px 0', padding: '6px', borderRadius: '4px', borderLeft: `4px solid ${color}`, fontSize: '11px', display: 'flex', justifyContent: 'space-between', border: '1px solid #1f2937', color: '#f8fafc', cursor: 'grab' }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+           <span><strong>{unit.displayId}</strong> {member.role}</span>
+           {context === 'staffing' && label && <span style={{ fontSize: '9px', color: '#38bdf8', fontWeight: 'bold' }}>📍 {label}</span>}
+        </div>
+        {context === 'tactical' && <button onClick={() => {
+            const nextUnits = units.map((u:any) => u.id === unit.id ? {...u, members: u.members.map((m:any, i:number) => i === idx ? {...m, assignment: "Unassigned"} : m)} : u);
+            syncState({ units: nextUnits });
+        }} style={{ background: '#991b1b', color: 'white', border: 'none', borderRadius: '2px', padding: '0 4px', cursor: 'pointer' }}>-</button>}
       </div>
     );
   };
 
   const renderTaskCard = (task: any) => {
-    const assigned = [];
-    units?.forEach(u => u.members?.forEach((m, idx) => { if (m.assignment === task.id) assigned.push({ unit: u, member: m, idx }); }));
-
+    const assigned = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({u, m, idx}))).filter(item => item.m.assignment === task.id);
     return (
-      <div 
-        key={task.id} draggable
-        onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "task"); e.dataTransfer.setData("taskId", task.id); }}
-        onDragOver={(e) => e.preventDefault()}
+      <div key={task.id} draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "task"); e.dataTransfer.setData("taskId", task.id); }} onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault(); e.stopPropagation();
-          if (e.dataTransfer.getData("type") === "personnel") {
-            const data = JSON.parse(e.dataTransfer.getData("data"));
-            updateAssignment(data.unitId, data.idx, task.id);
+          const type = e.dataTransfer.getData("type");
+          if (type === "personnel") {
+            const d = JSON.parse(e.dataTransfer.getData("data"));
+            const nextUnits = units.map((u:any) => u.id === d.unitId ? {...u, members: u.members.map((m:any, i:number) => i === d.idx ? {...m, assignment: task.id} : m)} : u);
+            syncState({ units: nextUnits });
+          } else if (type === "unit") {
+            const uId = e.dataTransfer.getData("unitId");
+            const nextUnits = units.map((u:any) => u.id === uId ? {...u, members: u.members.map((m:any) => ({...m, assignment: task.id}))} : u);
+            syncState({ units: nextUnits });
           }
         }}
-        style={{ background: '#1e293b', borderRadius: '8px', padding: '10px', marginBottom: '8px', border: '1px solid #475569', minHeight: '60px' }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+        style={{ background: '#020617', borderRadius: '8px', padding: '10px', marginBottom: '10px', border: '1px solid #1e293b', borderLeft: '4px solid #38bdf8', minHeight: '60px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '4px', marginBottom: '6px' }}>
           <div style={{ fontSize: '11px', fontWeight: 900, color: '#38bdf8' }}>{task.name.toUpperCase()}</div>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={() => moveTask(task.id, 'up')} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: '10px' }}>▲</button>
-            <button onClick={() => moveTask(task.id, 'down')} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: '10px' }}>▼</button>
+            <button onClick={(e) => { e.stopPropagation(); moveTask(task.id, 'up'); }} style={{ background: '#1e293b', color: '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '10px' }}>▲</button>
+            <button onClick={(e) => { e.stopPropagation(); moveTask(task.id, 'down'); }} style={{ background: '#1e293b', color: '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '10px' }}>▼</button>
           </div>
         </div>
-        {assigned.map(p => renderPersonnelTag(p.unit, p.member, p.idx, 'tactical'))}
+        {assigned.map(item => renderPersonnelTag(item.u, item.m, item.idx, 'tactical'))}
       </div>
     );
   };
 
-  const renderBucket = (bucket: any, type: 'division' | 'branch' | 'section') => {
-    const supervisors = [];
-    units?.forEach(u => u.members?.forEach((m, idx) => { if (m.assignment === bucket.id) supervisors.push({ unit: u, member: m, idx }); }));
-    const isCommand = activeCommand.some(c => c.id === bucket.id);
+  const renderBucket = (bucket: any, sectionKey: string) => {
+    const sups = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({u, m, idx}))).filter(item => item.m.assignment === bucket.id);
+    const bg = sectionKey === 'divisions' ? '#334155' : sectionKey === 'branches' ? '#1e293b' : '#0f172a';
 
     return (
-      <div 
-        key={bucket.id} draggable={type !== 'section'}
-        onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", type); e.dataTransfer.setData("id", bucket.id); }}
-        onDragOver={(e) => e.preventDefault()}
+      <div key={bucket.id} onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault(); e.stopPropagation();
-          const dropType = e.dataTransfer.getData("type");
-          if (dropType === 'personnel') {
-            const data = JSON.parse(e.dataTransfer.getData("data"));
-            updateAssignment(data.unitId, data.idx, bucket.id);
-          } else if (dropType === 'task' && type === 'division') {
-            handleTaskDeployment(e.dataTransfer.getData("taskId"), bucket.id);
-          } else if (dropType === 'division' && type === 'branch') {
-            setDivLocations(prev => ({ ...prev, [e.dataTransfer.getData("id")]: bucket.id }));
-          } else if (dropType === 'branch' && type === 'section') {
-            setBranchLocations(prev => ({ ...prev, [e.dataTransfer.getData("id")]: bucket.id }));
+          const dT = e.dataTransfer.getData("type");
+          if (dT === 'unit') {
+            const uId = e.dataTransfer.getData("unitId");
+            const nextUnits = units.map((u:any) => u.id === uId ? {...u, members: u.members.map((m:any) => ({...m, assignment: bucket.id}))} : u);
+            syncState({ units: nextUnits });
+          } else if (dT === 'personnel') {
+            const d = JSON.parse(e.dataTransfer.getData("data"));
+            const nextUnits = units.map((u:any) => u.id === d.unitId ? {...u, members: u.members.map((m:any, i:number) => i === d.idx ? {...m, assignment: bucket.id} : m)} : u);
+            syncState({ units: nextUnits });
+          } else if (dT === 'task' && sectionKey === 'divisions') {
+            setTaskLocations(p => ({...p, [e.dataTransfer.getData("taskId")]: bucket.id}));
           }
         }}
-        style={{ background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #334155', marginTop: '10px', minHeight: '80px', position: 'relative' }}
-      >
-        <div style={{ color: '#94a3b8', fontSize: '11px', fontWeight: 900, marginBottom: '8px', borderBottom: '1px solid #334155' }}>{bucket.name.toUpperCase()}</div>
+        style={{ background: bg, padding: '12px', borderRadius: '8px', border: '1px solid #475569', marginTop: '12px', minHeight: '80px', position: 'relative' }}>
         
-        {supervisors.length > 0 && (
-          <div style={{ marginBottom: '10px' }}>
-            {!isCommand && <div style={{ fontSize: '9px', color: '#64748b', fontWeight: 900 }}>SUPERVISOR / COMMAND</div>}
-            {supervisors.map(p => renderPersonnelTag(p.unit, p.member, p.idx, 'tactical'))}
+        <div style={{ position: 'absolute', right: '8px', top: '8px', display: 'flex', gap: '5px' }}>
+            {sectionKey === 'divisions' && <button onClick={() => spawnNextDivision(bucket.name)} style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', cursor: 'pointer', fontWeight: 'bold' }}>+</button>}
+            <button onClick={() => removeBucket(bucket.id, sectionKey)} style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', cursor: 'pointer' }}>✕</button>
+        </div>
+
+        <div style={{ color: '#f1f5f9', fontSize: '11px', fontWeight: 900, marginBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>{bucket.name.toUpperCase()}</div>
+        {sups.length > 0 && (
+          <div style={{ marginBottom: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.1)' }}>
+            <div style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 900 }}>SUPERVISOR / COMMAND</div>
+            {sups.map(p => renderPersonnelTag(p.u, p.m, p.idx, 'tactical'))}
           </div>
         )}
-
-        {type === 'section' && activeBranches.filter(b => branchLocations[b.id] === bucket.id).map(b => renderBucket(b, 'branch'))}
-        {type === 'branch' && activeDivisions.filter(d => divLocations[d.id] === bucket.id).map(d => renderBucket(d, 'division'))}
-        {type === 'division' && allTasks.filter(t => taskLocations[t.id] === bucket.id).map(t => renderTaskCard(t))}
+        {allTasks.filter(t => taskLocations[t.id] === bucket.id).map(renderTaskCard)}
       </div>
     );
   };
 
+  // --- 5. MAIN PAGE RENDER ---
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', height: '100%', background: '#060b13', overflow: 'hidden' }}>
-      
+    <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', height: '100vh', background: '#060b13', overflow: 'hidden' }}>
       {/* COLUMN 1: STAFFING */}
       <div style={{ background: '#0f172a', borderRight: '1px solid #1e293b', overflowY: 'auto', padding: '15px' }}>
         <h3 style={{ color: '#38bdf8', borderBottom: '2px solid #38bdf8', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>STAFFING</h3>
-        {units?.map((u: FireUnit) => (
-          <div key={u.id} style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px' }}>
-            <div style={{ fontWeight: 900 }}>{u.displayId}</div>
-            {u.members?.map((m: any, idx: number) => (m.assignment === "Unassigned" || m.assignment === "STAGING") && renderPersonnelTag(u, m, idx, 'staffing'))}
+        {[...(units || [])].sort((a,b) => {
+            const aF = a.members.every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
+            const bF = b.members.every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
+            return (aF ? 1 : 0) - (bF ? 1 : 0);
+        }).map(u => (
+          <div key={u.id} draggable onDragStart={(e) => { e.dataTransfer.setData("type", "unit"); e.dataTransfer.setData("unitId", u.id); }}
+            style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px', opacity: u.members.every((m:any) => m.assignment !== "Unassigned") ? 0.4 : 1 }}>
+            <div style={{ fontWeight: 900, color: '#f8fafc', fontSize: '12px' }}>{u.displayId}</div>
+            {u.members?.map((m: any, idx: number) => renderPersonnelTag(u, m, idx, 'staffing'))}
           </div>
         ))}
       </div>
 
       {/* COLUMN 2: STRUCTURE */}
-      <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <section>{activeCommand.map(c => renderBucket(c, 'section'))}</section>
-        <section>{activeGeneral.map(g => renderBucket(g, 'section'))}</section>
-        <section>
-          <div style={{ color: '#a855f7', fontWeight: 900, borderBottom: '2px solid #a855f7', paddingBottom: '5px' }}>BRANCHES</div>
-          {activeBranches.filter(b => !branchLocations[b.id]).map(b => renderBucket(b, 'branch'))}
-        </section>
-        <section>
-          <div style={{ color: '#10b981', fontWeight: 900, borderBottom: '2px solid #10b981', paddingBottom: '5px' }}>DIVISIONS / GROUPS</div>
-          {activeDivisions.filter(d => !divLocations[d.id]).map(d => renderBucket(d, 'division'))}
-        </section>
+      <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '30px' }}>
+        <section>{renderHeader("COMMAND", "#ef4444", "command")}{activeCommand.map(c => renderBucket(c, "command"))}</section>
+        <section>{renderHeader("GENERAL STAFF", "#f97316", "general")}{activeGeneral.map(g => renderBucket(g, "general"))}</section>
+        <section>{renderHeader("BRANCHES", "#a855f7", "branches")}{activeBranches.map(b => renderBucket(b, "branches"))}</section>
+        <section>{renderHeader("DIVISIONS", "#10b981", "divisions")}{sortDivisions(activeDivisions).map(d => renderBucket(d, "divisions"))}</section>
       </div>
 
       {/* COLUMN 3: TASKS */}
       <div style={{ padding: '15px', overflowY: 'auto' }}>
         <h3 style={{ color: '#facc15', borderBottom: '2px solid #facc15', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>AVAILABLE TASKS</h3>
-        <div onDragOver={e => e.preventDefault()} onDrop={e => e.dataTransfer.getData("type") === "task" && handleTaskDeployment(e.dataTransfer.getData("taskId"), "")} style={{ minHeight: '100%' }}>
+        <div onDragOver={e => e.preventDefault()} onDrop={e => {
+            const tId = e.dataTransfer.getData("taskId");
+            if (tId) setTaskLocations(p => { const n={...p}; delete n[tId]; return n; });
+        }} style={{ minHeight: '100%' }}>
           {allTasks.filter(t => !taskLocations[t.id]).map(renderTaskCard)}
         </div>
       </div>
     </div>
   );
+
+  function renderHeader(title: string, color: string, key: string) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `2px solid ${color}`, marginBottom: '10px' }}>
+        <h3 style={{ color, fontSize: '13px', fontWeight: 900 }}>{title}</h3>
+        <select onChange={(e) => {
+          const val = e.target.value; if(!val) return;
+          const name = val === "CUSTOM" ? prompt("Name:") : val; if(!name) return;
+          const nB = { id: `id-${Date.now()}`, name };
+          if(key === 'command') setActiveCommand(p => [...p, nB]);
+          else if(key === 'general') setActiveGeneral(p => [...p, nB]);
+          else if(key === 'branches') setActiveBranches(p => [...p, nB]);
+          else if(key === 'divisions') setActiveDivisions(p => sortDivisions([...p, nB]));
+          e.target.value = "";
+        }} style={{ background: 'transparent', color, border: 'none', fontWeight: 'bold' }} value="">
+          <option value="">+</option>
+          <option value="CUSTOM">Blank</option>
+          {(menuOptions as any)[key]?.map((opt:string) => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      </div>
+    );
+  }
 }
