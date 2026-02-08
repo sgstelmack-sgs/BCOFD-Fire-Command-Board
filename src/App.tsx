@@ -26,33 +26,14 @@ export interface Incident {
   active: boolean;
 }
 
-// MASTER TACTICAL COLORS (BCoFD Standard)
+// MASTER TACTICAL COLORS
 export const getUnitColor = (type: string) => {
   const t = type?.toUpperCase() || "";
-  if (t.includes("ENGINE") || t.startsWith("E")) return "#1e40af"; // Blue
-  if (t.includes("TRUCK") || t.includes("TOWER") || t.startsWith("T"))
-    return "#991b1b"; // Red
-  if (
-    t.includes("SQUAD") ||
-    t.includes("RESCUE") ||
-    t.startsWith("SQ") ||
-    t.startsWith("R")
-  )
-    return "#166534"; // Green
-  if (
-    t.includes("CHIEF") ||
-    t.includes("BC") ||
-    t.includes("DC") ||
-    t.startsWith("B")
-  )
-    return "#ca8a04"; // Gold
-  if (
-    t.includes("MEDIC") ||
-    t.includes("AMBULANCE") ||
-    t.startsWith("M") ||
-    t.startsWith("A")
-  )
-    return "#c2410c"; // Orange
+  if (t === "ENGINE") return "#1e40af"; // Blue
+  if (t === "TRUCK" || t === "TOWER") return "#991b1b"; // Red
+  if (t === "SQUAD" || t === "RESCUE") return "#166534"; // Green
+  if (t === "CHIEF" || t === "BC") return "#ca8a04"; // Gold
+  if (t === "MEDIC" || t === "AMBULANCE") return "#c2410c"; // Orange
   return "#475569";
 };
 
@@ -129,7 +110,7 @@ export default function App() {
             .eq("unit_id", lookupId)
             .maybeSingle();
 
-          // LOG MISSING UNIT TO DB
+          // LOG MISSING UNIT
           if (!appData && !isGhost) {
             supabase
               .from("missing_apparatus")
@@ -137,9 +118,9 @@ export default function App() {
                 {
                   id: lookupId,
                   last_incident_id: idMatch ? idMatch[1] : "UNKNOWN",
-                  suggested_type: lookupId.startsWith("E")
+                  suggested_type: /^E\d/.test(lookupId)
                     ? "ENGINE"
-                    : lookupId.startsWith("A") || lookupId.startsWith("M")
+                    : /^A\d|^M\d/.test(lookupId)
                     ? "MEDIC"
                     : "OTHER",
                 },
@@ -148,12 +129,14 @@ export default function App() {
               .then();
           }
 
+          // TIGHTER SHORTHAND LOGIC
           let tacticalType = appData?.type || "OTHER";
           if (tacticalType === "OTHER") {
-            if (lookupId.startsWith("E")) tacticalType = "ENGINE";
-            else if (lookupId.startsWith("T")) tacticalType = "TRUCK";
-            else if (lookupId.startsWith("A") || lookupId.startsWith("M"))
-              tacticalType = "MEDIC";
+            if (/^E\d/.test(lookupId)) tacticalType = "ENGINE";
+            else if (/^T\d|^TW\d|^L\d/.test(lookupId)) tacticalType = "TRUCK";
+            else if (/^M\d|^A\d/.test(lookupId)) tacticalType = "MEDIC";
+            else if (/^SQ\d|^R\d/.test(lookupId)) tacticalType = "SQUAD";
+            else if (/^B\d|^D\d|^CH\d/.test(lookupId)) tacticalType = "CHIEF";
           }
 
           return {
