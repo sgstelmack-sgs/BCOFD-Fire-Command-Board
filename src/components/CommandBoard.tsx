@@ -1,404 +1,438 @@
 import React, { useState } from "react";
-import { FireUnit, Member, Incident } from "../App";
-
-interface CommandBoardProps {
-  incident: Incident;
-  units: FireUnit[];
-  setUnits: (units: FireUnit[]) => void;
-  syncState: (payload: { units?: FireUnit[]; incident?: Incident }) => void;
-}
+import { FireUnit, Incident, Member } from "../App";
 
 export default function CommandBoard({
   incident,
   units,
-  setUnits,
   syncState,
-}: CommandBoardProps) {
-  // FIXED: Variable name is now 'newSectorName' to match the input
-  const [sectors, setSectors] = useState<string[]>([
-    "DIVISION 1",
-    "DIVISION 2",
-    "ROOF",
-    "MEDICAL",
-    "STAGING",
+  handleEndIncident,
+}: any) {
+  const [divisions, setDivisions] = useState([
+    "Incident Command",
+    "Safety Officer",
+    "Division 1",
+    "Division Alpha",
+    "RIT Group",
   ]);
-  const [newSectorName, setNewSectorName] = useState("");
-  const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
+  const [tasks, setTasks] = useState([
+    "Fire Attack",
+    "Search & Rescue",
+    "Ventilation",
+    "Water Supply",
+    "RIT",
+  ]);
+  const [selectedMember, setSelectedMember] = useState<{
+    unitId: string;
+    idx: number;
+  } | null>(null);
+  const [taskAssignments, setTaskAssignments] = useState<{
+    [key: string]: string;
+  }>({});
 
-  const isExpanded = (id: string) => expandedUnits.indexOf(id) !== -1;
+  // --- HELPER: GET APPARATUS COLORS ---
+  const getUnitColor = (type: string) => {
+    const t = type?.toUpperCase();
+    if (t === "ENGINE") return "#ef4444"; // Red
+    if (t === "TRUCK" || t === "SQUAD" || t === "TOWER") return "#f97316"; // Orange
+    if (t === "BC" || t === "DC") return "#ffffff"; // White for Command
+    return "#334155"; // Default Slate
+  };
 
-  const addSector = () => {
-    if (newSectorName && sectors.indexOf(newSectorName.toUpperCase()) === -1) {
-      setSectors([...sectors, newSectorName.toUpperCase()]);
-      setNewSectorName("");
+  // --- HELPER: RANK ICONS ---
+  const getRankIcon = (role: string, unitId: string) => {
+    const r = role.toLowerCase();
+    if (
+      r.includes("officer") ||
+      r.includes("commander") ||
+      r.includes("command")
+    ) {
+      return unitId.includes("BC") || unitId.includes("DC") ? "⛑️" : "🪖";
     }
+    return null;
   };
 
-  const moveUnit = (unitId: string, targetSector: string) => {
-    const nextUnits = units.map((u) =>
-      u.id === unitId ? { ...u, assignment: targetSector } : u
-    );
-    syncState({ units: nextUnits });
-  };
+  // --- CORE LOGIC: ASSIGN WITH TETHERING ---
+  const assignMember = (target: string) => {
+    if (!selectedMember) return;
 
-  const updateTask = (unitId: string, task: string) => {
-    const nextUnits = units.map((u) =>
-      u.id === unitId ? { ...u, task: task.toUpperCase() } : u
-    );
-    syncState({ units: nextUnits });
-  };
+    const nextUnits = units.map((u: any) => {
+      if (u.id !== selectedMember.unitId) return u;
 
-  const handleBenchmark = (label: string) => {
-    const now = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
+      const m = [...u.members];
+      const selectedRole = m[selectedMember.idx].role;
+
+      // 1. Assign the selected person
+      m[selectedMember.idx].assignment = target;
+
+      // 2. DYNAMIC TETHERING (Using DB linked_pairs)
+      // Check the pairs defined in your apparatus table
+      const pairs = u.linked_logic || []; // Ensure this is passed from App.tsx
+      pairs.forEach((pair: string[]) => {
+        if (pair.includes(selectedRole)) {
+          const partnerRole = pair.find((r) => r !== selectedRole);
+          const pIdx = m.findIndex((mem) => mem.role === partnerRole);
+          // Only move the partner if they aren't already assigned somewhere else
+          if (
+            pIdx !== -1 &&
+            (!m[pIdx].assignment || m[pIdx].assignment === "Unassigned")
+          ) {
+            m[pIdx].assignment = target;
+          }
+        }
+      });
+
+      return { ...u, members: m };
     });
-    const currentBenchmarks = { ...(incident.benchmarks || {}) };
 
-    if (currentBenchmarks[label]) {
-      delete currentBenchmarks[label];
-    } else {
-      currentBenchmarks[label] = now;
-    }
-
-    syncState({ incident: { ...incident, benchmarks: currentBenchmarks } });
+    syncState({ units: nextUnits });
+    setSelectedMember(null);
   };
 
-  const unassignedUnits = units.filter(
-    (u) =>
-      u.status === "arrived" && (!u.assignment || u.assignment === "STAGING")
-  );
+  const clearMember = (unitId: string, mIdx: number) => {
+    const nextUnits = units.map((u: any) => {
+      if (u.id !== unitId) return u;
+      const m = [...u.members];
+      m[mIdx].assignment = "Unassigned";
+      return { ...u, members: m };
+    });
+    syncState({ units: nextUnits });
+  };
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "320px 1fr 300px",
-        gap: "15px",
-        height: "calc(100vh - 50px)",
+        gridTemplateColumns: "380px 1fr",
+        height: "calc(100vh - 48px)",
         background: "#060b13",
-        padding: "10px",
-        boxSizing: "border-box",
+        overflow: "hidden",
       }}
     >
-      {/* COLUMN 1: STAGING & UTILITIES */}
-      <aside style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+      {/* SIDEBAR: STAGING */}
+      <aside
+        style={{
+          background: "#0b121f",
+          padding: "15px",
+          overflowY: "auto",
+          borderRight: "1px solid #1f2937",
+        }}
+      >
         <div
           style={{
-            background: "#1e293b",
-            padding: "15px",
-            borderRadius: "6px",
-            border: "1px solid #334155",
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: "20px",
           }}
         >
-          <h3
+          <h3 style={{ color: "#38bdf8", fontSize: "12px", margin: 0 }}>
+            STAGING / STAFFING
+          </h3>
+          <button
+            onClick={() => handleEndIncident()}
             style={{
-              color: "#f97316",
-              margin: "0 0 12px 0",
-              fontSize: "14px",
-              borderBottom: "1px solid #334155",
-              paddingBottom: "5px",
+              background: "#ef4444",
+              color: "white",
+              border: "none",
+              padding: "6px 12px",
+              borderRadius: "4px",
+              fontWeight: "bold",
+              cursor: "pointer",
             }}
           >
-            STAGING / UNASSIGNED
-          </h3>
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
-          >
-            {unassignedUnits.map((u) => (
-              <div
-                key={u.id}
-                style={{
-                  background: "#0f172a",
-                  padding: "10px",
-                  borderRadius: "4px",
-                  borderLeft: "4px solid #f97316",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <span style={{ fontWeight: "bold", fontSize: "16px" }}>
-                    {u.id}
-                  </span>
-                  <select
-                    onChange={(e) => moveUnit(u.id, e.target.value)}
-                    style={{
-                      background: "#334155",
-                      color: "white",
-                      border: "none",
-                      padding: "4px",
-                      borderRadius: "2px",
-                      fontSize: "11px",
-                    }}
-                  >
-                    <option value="">ASSIGN...</option>
-                    {sectors
-                      .filter((s) => s !== "STAGING")
-                      .map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                {u.station && (
-                  <div
-                    style={{
-                      fontSize: "10px",
-                      color: "#64748b",
-                      marginTop: "4px",
-                    }}
-                  >
-                    STA {u.station} | BAT {u.battalion}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+            END INCIDENT
+          </button>
         </div>
 
-        <div
-          style={{
-            background: "#1e293b",
-            padding: "15px",
-            borderRadius: "6px",
-          }}
-        >
-          <h4
-            style={{ color: "#94a3b8", fontSize: "11px", margin: "0 0 8px 0" }}
+        {units.map((u: any) => (
+          <div
+            key={u.id}
+            style={{
+              background: "#1e293b",
+              borderRadius: "8px",
+              marginBottom: "15px",
+              borderLeft: `6px solid ${getUnitColor(u.type)}`,
+            }}
           >
-            CREATE NEW SECTOR
-          </h4>
-          <div style={{ display: "flex", gap: "5px" }}>
-            <input
-              value={newSectorName}
-              onChange={(e) => setNewSectorName(e.target.value)}
-              placeholder="e.g. DIV 3"
+            <div
               style={{
-                flex: 1,
-                background: "#0f172a",
-                border: "1px solid #334155",
-                color: "white",
-                padding: "8px",
-                borderRadius: "4px",
-              }}
-            />
-            <button
-              onClick={addSector}
-              style={{
-                background: "#38bdf8",
-                border: "none",
-                color: "black",
-                padding: "0 15px",
-                borderRadius: "4px",
+                padding: "10px",
                 fontWeight: "bold",
+                borderBottom: "1px solid #334155",
+              }}
+            >
+              {u.id}
+            </div>
+            <div style={{ padding: "10px" }}>
+              {u.members.map((m: any, mIdx: number) => {
+                const isSelected =
+                  selectedMember?.unitId === u.id &&
+                  selectedMember?.idx === mIdx;
+                const isAssigned =
+                  m.assignment && m.assignment !== "Unassigned";
+                return (
+                  <div
+                    key={mIdx}
+                    onClick={() =>
+                      setSelectedMember(
+                        isSelected ? null : { unitId: u.id, idx: mIdx }
+                      )
+                    }
+                    style={{
+                      padding: "8px",
+                      marginBottom: "4px",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      background: isSelected
+                        ? "#1e3a8a"
+                        : isAssigned
+                        ? "#064e3b"
+                        : "#0f172a",
+                      border: isSelected
+                        ? "1px solid #38bdf8"
+                        : "1px solid transparent",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "8px",
+                        color: "#38bdf8",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      {getRankIcon(m.role, u.id)} {m.role.toUpperCase()}
+                    </div>
+                    <div style={{ fontSize: "13px", color: "white" }}>
+                      {m.name || "---"}
+                      {isAssigned && (
+                        <span
+                          style={{
+                            color: "#facc15",
+                            float: "right",
+                            fontSize: "10px",
+                          }}
+                        >
+                          {m.assignment}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </aside>
+
+      {/* TACTICAL GRID */}
+      <section
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "20px",
+          padding: "20px",
+          overflowY: "auto",
+        }}
+      >
+        {/* COLUMN 1: DIVISIONS */}
+        <div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "15px",
+            }}
+          >
+            <h3 style={{ color: "#22c55e", fontSize: "12px" }}>
+              ICS / DIVISIONS
+            </h3>
+            <button
+              onClick={() =>
+                setDivisions([...divisions, prompt("Name:") || ""])
+              }
+              style={{
+                background: "transparent",
+                border: "1px solid #22c55e",
+                color: "#22c55e",
+                borderRadius: "50%",
+                width: "20px",
+                height: "20px",
               }}
             >
               +
             </button>
           </div>
-        </div>
-      </aside>
-
-      {/* COLUMN 2: TACTICAL GRID */}
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-          gap: "10px",
-          overflowY: "auto",
-        }}
-      >
-        {sectors
-          .filter((s) => s !== "STAGING")
-          .map((s) => (
+          {divisions.map((div) => (
             <div
-              key={s}
+              key={div}
+              onClick={() => assignMember(div)}
               style={{
                 background: "#111827",
-                border: "1px solid #1e293b",
-                borderRadius: "6px",
+                border: selectedMember
+                  ? "2px solid #22c55e"
+                  : "1px solid #1e293b",
+                borderRadius: "8px",
+                marginBottom: "15px",
+                minHeight: "100px",
               }}
             >
               <div
                 style={{
                   background: "#1e293b",
-                  padding: "8px",
-                  textAlign: "center",
-                  color: "#38bdf8",
+                  padding: "6px 12px",
+                  fontSize: "11px",
+                  color: "#94a3b8",
                   fontWeight: "bold",
-                  fontSize: "12px",
                 }}
               >
-                {s}
+                {div.toUpperCase()}
+              </div>
+              <div style={{ padding: "10px" }}>
+                {units.map((u: any) =>
+                  u.members.map(
+                    (m: any, mi: number) =>
+                      m.assignment === div && (
+                        <div
+                          key={mi}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            clearMember(u.id, mi);
+                          }}
+                          style={{
+                            background: getUnitColor(u.type),
+                            color: u.type === "BC" ? "black" : "white",
+                            padding: "8px",
+                            marginBottom: "5px",
+                            borderRadius: "4px",
+                            fontSize: "13px",
+                            fontWeight: "bold",
+                            display: "flex",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <span>
+                            {getRankIcon(m.role, u.id)} {u.id}:{" "}
+                            {m.name || m.role}
+                          </span>
+                          <span style={{ opacity: 0.5 }}>×</span>
+                        </div>
+                      )
+                  )
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* COLUMN 2: TASKS */}
+        <div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "15px",
+            }}
+          >
+            <h3 style={{ color: "#38bdf8", fontSize: "12px" }}>
+              INCIDENT TASKS
+            </h3>
+            <button
+              onClick={() => setTasks([...tasks, prompt("Name:") || ""])}
+              style={{
+                background: "transparent",
+                border: "1px solid #38bdf8",
+                color: "#38bdf8",
+                borderRadius: "50%",
+                width: "20px",
+                height: "20px",
+              }}
+            >
+              +
+            </button>
+          </div>
+          {tasks.map((task) => (
+            <div
+              key={task}
+              onClick={() => assignMember(task)}
+              style={{
+                background: "#111827",
+                border: selectedMember
+                  ? "2px solid #38bdf8"
+                  : "1px solid #1e293b",
+                borderRadius: "8px",
+                marginBottom: "15px",
+                minHeight: "100px",
+              }}
+            >
+              <div
+                style={{
+                  background: "#1e293b",
+                  padding: "8px 12px",
+                  fontSize: "11px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ fontWeight: "bold" }}>{task.toUpperCase()}</span>
+                <select
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) =>
+                    setTaskAssignments({
+                      ...taskAssignments,
+                      [task]: e.target.value,
+                    })
+                  }
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#facc15",
+                    fontSize: "9px",
+                  }}
+                >
+                  <option value="">REPORTS TO...</option>
+                  {divisions.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div
                 style={{
                   padding: "10px",
                   display: "flex",
-                  flexDirection: "column",
-                  gap: "8px",
+                  flexWrap: "wrap",
+                  gap: "6px",
                 }}
               >
-                {units
-                  .filter((u) => u.assignment === s)
-                  .map((u) => (
-                    <div
-                      key={u.id}
-                      style={{
-                        background: "#0f172a",
-                        border: "1px solid #334155",
-                        borderRadius: "4px",
-                        padding: "10px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                        }}
-                      >
-                        <span style={{ fontWeight: "bold", color: "white" }}>
-                          {u.id}
-                        </span>
-                        <button
-                          onClick={() => moveUnit(u.id, "STAGING")}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            color: "#ef4444",
-                            fontSize: "14px",
-                          }}
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <input
-                        placeholder="TASK"
-                        defaultValue={u.task || ""}
-                        onBlur={(e) => updateTask(u.id, e.target.value)}
-                        style={{
-                          width: "100%",
-                          background: "#020617",
-                          border: "1px solid #1e293b",
-                          color: "#4ade80",
-                          fontSize: "11px",
-                          padding: "6px",
-                          marginTop: "8px",
-                        }}
-                      />
-                      <div
-                        onClick={() =>
-                          setExpandedUnits(
-                            isExpanded(u.id)
-                              ? expandedUnits.filter((i) => i !== u.id)
-                              : [...expandedUnits, u.id]
-                          )
-                        }
-                        style={{
-                          fontSize: "9px",
-                          color: "#475569",
-                          marginTop: "8px",
-                          cursor: "pointer",
-                          textAlign: "right",
-                        }}
-                      >
-                        {isExpanded(u.id) ? "HIDE CREW ▲" : "SHOW CREW ▼"}
-                      </div>
-                      {isExpanded(u.id) && (
+                {units.map((u: any) =>
+                  u.members.map(
+                    (m: any, mi: number) =>
+                      m.assignment === task && (
                         <div
+                          key={mi}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            clearMember(u.id, mi);
+                          }}
                           style={{
-                            marginTop: "5px",
-                            borderTop: "1px solid #1e293b",
-                            paddingTop: "5px",
+                            background: getUnitColor(u.type),
+                            padding: "5px 10px",
+                            borderRadius: "4px",
+                            fontSize: "12px",
+                            fontWeight: "bold",
+                            color: u.type === "BC" ? "black" : "white",
                           }}
                         >
-                          {u.members.map((m, idx) => (
-                            <div
-                              key={idx}
-                              style={{ fontSize: "10px", color: "#94a3b8" }}
-                            >
-                              {m.role}: {m.name || "---"}
-                            </div>
-                          ))}
+                          {getRankIcon(m.role, u.id)} {u.id}
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      )
+                  )
+                )}
               </div>
             </div>
           ))}
-      </section>
-
-      {/* COLUMN 3: BENCHMARKS */}
-      <aside>
-        <div
-          style={{
-            background: "#1e293b",
-            padding: "20px",
-            borderRadius: "6px",
-            border: "1px solid #334155",
-          }}
-        >
-          <h3
-            style={{
-              color: "#22c55e",
-              margin: "0 0 15px 0",
-              fontSize: "14px",
-              textAlign: "center",
-            }}
-          >
-            BENCHMARKS
-          </h3>
-          {[
-            "PRIMARY SEARCH",
-            "SECONDARY SEARCH",
-            "FIRE CONTROLLED",
-            "UTILITIES SECURED",
-            "PAR CHECK",
-          ].map((b) => {
-            const time = incident.benchmarks?.[b];
-            return (
-              <div
-                key={b}
-                onClick={() => handleBenchmark(b)}
-                style={{
-                  padding: "12px",
-                  marginBottom: "10px",
-                  background: time ? "#064e3b" : "#0f172a",
-                  border: `1px solid ${time ? "#22c55e" : "#334155"}`,
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  display: "flex",
-                  justifyContent: "space-between",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: "bold",
-                    color: time ? "white" : "#94a3b8",
-                  }}
-                >
-                  {b}
-                </span>
-                {time && (
-                  <span style={{ color: "#4ade80", fontFamily: "monospace" }}>
-                    {time}
-                  </span>
-                )}
-              </div>
-            );
-          })}
         </div>
-      </aside>
+      </section>
     </div>
   );
 }

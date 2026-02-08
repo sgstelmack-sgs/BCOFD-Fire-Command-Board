@@ -5,30 +5,28 @@ import Dispatch from "./components/Dispatch";
 import CommandBoard from "./components/CommandBoard";
 import Roster from "./components/Roster";
 
+// --- GLOBAL INTERFACES ---
 export interface Member {
   role: string;
   name: string;
   assignment: string;
 }
+
 export interface FireUnit {
   id: string;
   status: string;
   type: string;
   assignment: string;
-  task?: string;
   members: Member[];
   battalion?: string;
   station?: string;
 }
+
 export interface Incident {
   id: string;
   box: string;
   address: string;
   active: boolean;
-  callNotes?: string;
-  narrative?: string;
-  date?: string;
-  time?: string;
   benchmarks?: { [key: string]: string };
 }
 
@@ -36,8 +34,8 @@ export default function App() {
   const [view, setView] = useState("pre-dispatch");
   const [incident, setIncident] = useState<Incident | null>(null);
   const [units, setUnits] = useState<FireUnit[]>([]);
-  const [runningIncidents, setRunningIncidents] = useState<Incident[]>([]);
 
+  // REAL-TIME SYNC: Listen for updates from other tablets
   useEffect(() => {
     if (!incident?.id) return;
     const channel = supabase
@@ -51,13 +49,18 @@ export default function App() {
           filter: `id=eq.${incident.id}`,
         },
         (payload: any) => {
-          if (payload.new.state) {
-            const newState =
-              typeof payload.new.state === "string"
-                ? JSON.parse(payload.new.state)
-                : payload.new.state;
+          const newState =
+            typeof payload.new.state === "string"
+              ? JSON.parse(payload.new.state)
+              : payload.new.state;
+          if (newState) {
             setUnits(newState.units || []);
             if (newState.incident) setIncident(newState.incident);
+            // If the incident is marked inactive by someone else, kick to monitor
+            if (newState.incident?.active === false) {
+              setIncident(null);
+              setView("pre-dispatch");
+            }
           }
         }
       )
@@ -67,6 +70,7 @@ export default function App() {
     };
   }, [incident?.id]);
 
+  // --- UNIT BUILDER (Apparatus & Roster Lookup) ---
   const createUnitInstance = async (unitId: string): Promise<FireUnit> => {
     let rawId = unitId.toUpperCase().replace(/\s+/g, "");
     let status = "enroute";
@@ -74,19 +78,17 @@ export default function App() {
       status = "dispatched";
       rawId = rawId.substring(1);
     }
+
     const isEngine = rawId.includes("E") || rawId.includes("ENG");
 
-    // 1. Get Station/Battalion from 'apparatus' table
     const { data: appData } = await supabase
       .from("apparatus")
-      .select("battalion, station")
+      .select("*")
       .eq("id", rawId)
       .maybeSingle();
-
-    // 2. Get Crew from 'rosters' table
     const { data: rosterData } = await supabase
       .from("rosters")
-      .select("members")
+      .select("*")
       .eq("id", rawId)
       .maybeSingle();
 
@@ -94,30 +96,38 @@ export default function App() {
       id: rawId,
       status,
       type: isEngine ? "ENGINE" : "TRUCK",
-      assignment: "",
+      assignment: "STAGING",
       battalion: appData?.battalion || "UNK",
       station: appData?.station || "UNK",
       members: rosterData?.members
         ? rosterData.members.map((m: any) => ({
-            role: m.role,
-            name: m.name || "",
+            ...m,
             assignment: "Unassigned",
           }))
         : [
             { role: "Officer", name: "", assignment: "Unassigned" },
             { role: "Driver", name: "", assignment: "Unassigned" },
+            {
+              role: isEngine ? "Nozzle" : "Search",
+              name: "",
+              assignment: "Unassigned",
+            },
+            {
+              role: isEngine ? "Backup" : "OV",
+              name: "",
+              assignment: "Unassigned",
+            },
           ],
     };
   };
 
+  // --- INCIDENT LIFECYCLE ---
   const handleStartIncident = async (notes: string) => {
-    if (!notes) return;
-    const idMatch = notes.match(/ID:\s*([A-Z0-9-]+)/i);
     const boxMatch = notes.match(/BOX:\s*([\d-]+)/i);
     const addrMatch = notes.match(/ADDR:\s*(.*?)\sUNIT:/i);
     const unitMatch = notes.match(/UNIT:\s*(.*?)\s(?:INFO|STA|DATE)/i);
 
-    const incidentId = idMatch ? idMatch[1] : `INC-${Date.now()}`;
+    const incidentId = `INC-${Date.now()}`;
     const unitList = unitMatch
       ? unitMatch[1]
           .trim()
@@ -133,7 +143,6 @@ export default function App() {
       box: boxMatch ? boxMatch[1] : "---",
       address: addrMatch ? addrMatch[1].trim() : "Unknown",
       active: true,
-      benchmarks: {},
     };
 
     setIncident(initialIncident);
@@ -149,15 +158,42 @@ export default function App() {
     ]);
   };
 
-  const syncState = async (payload: any) => {
+  const handleEndIncident = async () => {
+    if (!incident?.id) return;
+    if (!window.confirm("End incident and archive?")) return;
+
+    const closedIncident = { ...incident, active: false };
+
+    // Update DB to notify all other tablets
+    await supabase
+      .from("incidents")
+      .update({
+        state: { units: [], incident: closedIncident },
+      })
+      .eq("id", incident.id);
+
+    // Reset Local State
+    setIncident(null);
+    setUnits([]);
+    setView("pre-dispatch");
+  };
+
+  const syncState = async (payload: {
+    units?: FireUnit[];
+    incident?: Incident | null;
+  }) => {
     if (!incident?.id) return;
     const nextUnits = payload.units || units;
     const nextIncident = payload.incident || incident;
+
     setUnits(nextUnits);
     setIncident(nextIncident);
+
     await supabase
       .from("incidents")
-      .update({ state: { units: nextUnits, incident: nextIncident } })
+      .update({
+        state: { units: nextUnits, incident: nextIncident },
+      })
       .eq("id", incident.id);
   };
 
@@ -169,28 +205,68 @@ export default function App() {
         style={{
           display: "flex",
           background: "#111827",
-          height: "45px",
+          height: "48px",
           borderBottom: "1px solid #1f2937",
         }}
       >
-        {["pre-dispatch", "dispatch", "command", "roster"].map((v) => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            style={{
-              background: view === v ? "#2563eb" : "transparent",
-              color: "white",
-              border: "none",
-              padding: "0 20px",
-              cursor: "pointer",
-              fontWeight: "bold",
-              fontSize: "11px",
-            }}
-          >
-            {v.toUpperCase()}
-          </button>
-        ))}
+        <button
+          onClick={() => setView("pre-dispatch")}
+          style={{
+            background: view === "pre-dispatch" ? "#374151" : "transparent",
+            color: "white",
+            border: "none",
+            padding: "0 20px",
+            cursor: "pointer",
+            fontWeight: "bold",
+          }}
+        >
+          MONITOR
+        </button>
+        {incident && (
+          <>
+            <button
+              onClick={() => setView("dispatch")}
+              style={{
+                background: view === "dispatch" ? "#2563eb" : "transparent",
+                color: "white",
+                border: "none",
+                padding: "0 20px",
+                cursor: "pointer",
+                fontWeight: "bold",
+              }}
+            >
+              DISPATCH
+            </button>
+            <button
+              onClick={() => setView("command")}
+              style={{
+                background: view === "command" ? "#ea580c" : "transparent",
+                color: "white",
+                border: "none",
+                padding: "0 20px",
+                cursor: "pointer",
+                fontWeight: "bold",
+              }}
+            >
+              COMMAND
+            </button>
+          </>
+        )}
+        <button
+          onClick={() => setView("roster")}
+          style={{
+            background: view === "roster" ? "#8b5cf6" : "transparent",
+            color: "white",
+            border: "none",
+            padding: "0 20px",
+            cursor: "pointer",
+            fontWeight: "bold",
+          }}
+        >
+          ROSTER
+        </button>
       </nav>
+
       <main>
         {view === "pre-dispatch" && (
           <PreDispatch
@@ -214,6 +290,7 @@ export default function App() {
             units={units}
             setUnits={setUnits}
             syncState={syncState}
+            handleEndIncident={handleEndIncident}
           />
         )}
         {view === "roster" && <Roster />}
