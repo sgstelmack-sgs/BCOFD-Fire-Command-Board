@@ -19,9 +19,7 @@ export interface FireUnit {
   type: string;
   assignment: string;
   members: Member[];
-  battalion?: string;
-  station?: string;
-  linked_logic: any[];
+  linked_logic: string[][];
 }
 
 export interface Incident {
@@ -29,6 +27,7 @@ export interface Incident {
   box: string;
   address: string;
   active: boolean;
+  call?: string;
   notes?: string;
   timestamp?: string;
 }
@@ -38,7 +37,6 @@ export default function App() {
   const [incident, setIncident] = useState<Incident | null>(null);
   const [units, setUnits] = useState<FireUnit[]>([]);
 
-  // REAL-TIME SYNC
   useEffect(() => {
     if (!incident?.id) return;
     const channel = supabase
@@ -72,9 +70,14 @@ export default function App() {
     };
   }, [incident?.id]);
 
-  // --- UNIT BUILDER (Apparatus Card Logic) ---
   const createUnitInstance = async (unitId: string): Promise<FireUnit> => {
-    const rawId = unitId.toUpperCase().replace(/\s+/g, "");
+    let rawId = unitId.toUpperCase().replace(/\s+/g, "");
+    let status = "dispatched";
+
+    if (rawId.startsWith("G")) {
+      status = "ghosted";
+      rawId = rawId.substring(1);
+    }
 
     const { data: appData } = await supabase
       .from("apparatus")
@@ -87,45 +90,43 @@ export default function App() {
       .eq("id", rawId)
       .maybeSingle();
 
-    const isTruck =
-      rawId.includes("T") ||
-      rawId.includes("Q") ||
-      rawId.includes("S") ||
-      rawId.includes("TW");
-    const defaultRoles = isTruck
-      ? ["Officer", "Driver", "Left Jump", "Right Jump"]
-      : ["Officer", "Driver", "Nozzle", "Backup"];
+    const isTruck = /^(T|Q|S|TW|TK|RS)/.test(rawId);
+    const isMedic = /^(M|A|PM)/.test(rawId);
+    const isChief = /^(BC|DC|CH|B|STA|EMS)/.test(rawId);
 
-    const dbRoles = appData?.roles || defaultRoles;
+    let defaultRoles = ["Officer", "Driver", "Nozzle", "Backup"];
+    if (isTruck) defaultRoles = ["Officer", "Driver", "Jump", "Jump"];
+    if (isMedic) defaultRoles = ["AIC", "Driver"];
+    if (isChief) defaultRoles = ["Commander"];
+
+    const dbRoles: string[] = appData?.roles || defaultRoles;
+    const linkedLogic: string[][] = appData?.linked_pairs || [];
 
     return {
       id: rawId,
-      status: "dispatched",
-      type: appData?.type || (isTruck ? "TRUCK" : "ENGINE"),
+      status: status,
+      type:
+        appData?.type ||
+        (isMedic ? "MEDIC" : isTruck ? "TRUCK" : isChief ? "CHIEF" : "ENGINE"),
       assignment: "STAGING",
-      linked_logic: appData?.linked_pairs
-        ? typeof appData.linked_pairs === "string"
-          ? JSON.parse(appData.linked_pairs)
-          : appData.linked_pairs
-        : [],
+      linked_logic: linkedLogic,
       members: dbRoles.map((role: string) => {
-        const person = rosterData?.members?.find((m: any) => m.role === role);
+        const p = rosterData?.members?.find((m: any) => m.role === role);
         return {
           role,
-          // FALLBACK: Roster Name -> "E8 Officer" Default
-          name: person?.name || `${rawId} ${role}`,
-          rank: person?.rank || "",
+          name: p?.name || `${rawId} ${role}`,
+          rank: p?.rank || "",
           assignment: "Unassigned",
         };
       }),
     };
   };
 
-  // --- CAD PARSING & INCIDENT START ---
   const handleStartIncident = async (notes: string) => {
     const clean = notes.replace(/\n/g, " ").replace(/\s\s+/g, " ");
 
     const boxMatch = clean.match(/BOX:\s*([\d-]+)/i);
+    const callMatch = clean.match(/CALL:\s*(.*?)(?=\s*(ADDR:|UNIT:|INFO:|$))/i);
     const addrMatch = clean.match(
       /ADDR:\s*(.*?)(?=\s*(UNIT:|INFO:|DATE:|STA:|$))/i
     );
@@ -140,15 +141,21 @@ export default function App() {
     const idMatch = clean.match(/ID:\s*([A-Z0-9-]+)/i);
 
     const rawUnits = unitMatch ? unitMatch[1] : "";
-    const unitList = rawUnits.split(/[\s,]+/).filter((u) => u.length > 1);
+    const unitList = rawUnits.split(/[\s,]+/).filter((u) => {
+      // IGNORE STAXXA format (e.g., STA08A, STA19B)
+      const isStation = /^STA\d+[A-Z]?$/i.test(u);
+      return u.length > 1 && !isStation;
+    });
+
     const initialUnits = await Promise.all(
       unitList.map((id) => createUnitInstance(id))
     );
-
     const incidentId = idMatch ? idMatch[1] : `INC-${Date.now()}`;
+
     const initialIncident: Incident = {
       id: incidentId,
       box: boxMatch ? boxMatch[1] : "---",
+      call: callMatch ? callMatch[1].trim() : "",
       address: addrMatch ? addrMatch[1].trim() : "Unknown Address",
       active: true,
       notes: infoMatch ? infoMatch[1].trim() : "No additional comments",
@@ -161,33 +168,26 @@ export default function App() {
     setIncident(initialIncident);
     setView("dispatch");
 
-    // FIXED: Removed duplicate properties to resolve TS1117
     await supabase.from("incidents").insert([
       {
         id: incidentId,
         address: initialIncident.address,
         box: initialIncident.box,
         active: true,
-        state: {
-          units: initialUnits,
-          incident: initialIncident,
-        },
+        state: { units: initialUnits, incident: initialIncident },
       },
     ]);
   };
 
   const handleEndIncident = async () => {
     if (!incident || !window.confirm("End incident?")) return;
-    const closed = { ...incident, active: false };
-
     await supabase
       .from("incidents")
       .update({
         active: false,
-        state: { units: [], incident: closed },
+        state: { units: [], incident: { ...incident, active: false } },
       })
       .eq("id", incident.id);
-
     setIncident(null);
     setUnits([]);
     setView("pre-dispatch");
@@ -202,9 +202,7 @@ export default function App() {
     setUnits(nextUnits);
     await supabase
       .from("incidents")
-      .update({
-        state: { units: nextUnits, incident },
-      })
+      .update({ state: { units: nextUnits, incident } })
       .eq("id", incident.id);
   };
 
@@ -277,7 +275,6 @@ export default function App() {
           ROSTER
         </button>
       </nav>
-
       <main>
         {view === "pre-dispatch" && (
           <PreDispatch

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { FireUnit, Incident } from "../App";
 
 export default function Dispatch({
@@ -10,113 +10,156 @@ export default function Dispatch({
   units: FireUnit[];
   syncState: any;
 }) {
-  // Logic: Separate alerted units from ghosted units
+  // Track which units are expanded by their ID
+  const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
+
   const activeAlerts = units.filter((u: FireUnit) => u.status === "dispatched");
   const ghostedAlerts = units.filter((u: FireUnit) => u.status === "ghosted");
 
-  const renderUnitCard = (u: FireUnit, isGhosted: boolean) => (
-    <div
-      key={u.id}
-      style={{
-        background: "#0f172a",
-        borderRadius: "8px",
-        border: isGhosted ? "1px dashed #334155" : "1px solid #1e293b",
-        marginBottom: "20px",
-        opacity: isGhosted ? 0.5 : 1,
-        filter: isGhosted ? "grayscale(100%)" : "none",
-        overflow: "hidden",
-      }}
-    >
+  const toggleExpand = (unitId: string) => {
+    setExpandedUnits((prev) =>
+      prev.includes(unitId)
+        ? prev.filter((id) => id !== unitId)
+        : [...prev, unitId]
+    );
+  };
+
+  const renderUnitCard = (u: FireUnit, isGhosted: boolean) => {
+    const isExpanded = expandedUnits.includes(u.id);
+
+    return (
       <div
+        key={u.id}
         style={{
-          background: isGhosted ? "#1e293b" : "#2d3748",
-          padding: "10px 15px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          background: "#0f172a",
+          borderRadius: "12px",
+          border: isGhosted ? "2px dashed #334155" : "2px solid #1e293b",
+          marginBottom: "15px",
+          opacity: isGhosted ? 0.6 : 1,
+          filter: isGhosted ? "grayscale(100%)" : "none",
+          overflow: "hidden",
         }}
       >
-        <span style={{ fontWeight: "bold", color: "white", fontSize: "18px" }}>
-          {u.id} {isGhosted && "(GHOSTED)"}
-        </span>
-        <span
+        {/* CARD HEADER - Clickable to toggle expand */}
+        <div
+          onClick={() => toggleExpand(u.id)}
           style={{
-            fontSize: "10px",
-            color: "#94a3b8",
-            background: "#060b13",
-            padding: "2px 6px",
-            borderRadius: "4px",
+            background: isGhosted ? "#1e293b" : "#1f2937",
+            padding: "12px 15px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
           }}
         >
-          {u.type}
-        </span>
-      </div>
-
-      <div style={{ padding: "15px" }}>
-        {u.members.map((m: any, mIdx: number) => (
-          <div key={mIdx} style={{ marginBottom: "12px" }}>
-            <label
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span
               style={{
-                fontSize: "10px",
-                color: "#38bdf8",
-                display: "block",
-                marginBottom: "4px",
-                fontWeight: "bold",
+                transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                transition: "0.2s",
+                fontSize: "12px",
+                color: "#94a3b8",
               }}
             >
-              {m.role.toUpperCase()}
-            </label>
-            <input
-              type="text"
-              value={m.name}
-              onChange={(e) => {
-                const nextUnits = units.map((unit: FireUnit) => {
-                  if (unit.id !== u.id) return unit;
-                  const nextM = [...unit.members];
-                  nextM[mIdx].name = e.target.value;
-                  return { ...unit, members: nextM };
-                });
-                syncState({ units: nextUnits });
-              }}
-              style={{
-                width: "100%",
-                background: "#060b13",
-                border: "1px solid #334155",
-                borderRadius: "4px",
-                padding: "10px",
-                color: "white",
-                fontSize: "14px",
-              }}
-            />
+              ▶
+            </span>
+            <span
+              style={{ fontWeight: "bold", color: "white", fontSize: "18px" }}
+            >
+              {u.id} {isGhosted && "(GHOST)"}
+            </span>
           </div>
-        ))}
+          <span
+            style={{
+              fontSize: "10px",
+              color: "#38bdf8",
+              border: "1px solid #38bdf8",
+              padding: "2px 6px",
+              borderRadius: "4px",
+            }}
+          >
+            {u.type}
+          </span>
+        </div>
 
-        <button
-          onClick={() => {
-            const nextUnits = units.map((unit: FireUnit) =>
-              unit.id === u.id ? { ...unit, status: "enroute" } : unit
-            );
-            syncState({ units: nextUnits });
-          }}
-          style={{
-            width: "100%",
-            background: isGhosted ? "#4a5568" : "#eab308",
-            color: isGhosted ? "white" : "black",
-            border: "none",
-            padding: "14px",
-            borderRadius: "6px",
-            fontWeight: "900",
-            marginTop: "10px",
-            cursor: "pointer",
-            fontSize: "14px",
-            textTransform: "uppercase",
-          }}
-        >
-          {isGhosted ? "Activate & Respond" : "Responding"}
-        </button>
+        {/* COLLAPSIBLE CREW SECTION */}
+        {isExpanded && (
+          <div
+            style={{
+              padding: "15px",
+              borderTop: "1px solid #1e293b",
+              background: "#0b121f",
+            }}
+          >
+            {u.members.map((m: any, mIdx: number) => (
+              <div key={mIdx} style={{ marginBottom: "12px" }}>
+                <label
+                  style={{
+                    fontSize: "10px",
+                    color: "#38bdf8",
+                    display: "block",
+                    marginBottom: "4px",
+                    fontWeight: "bold",
+                  }}
+                >
+                  {m.role.toUpperCase()}
+                </label>
+                <input
+                  type="text"
+                  value={m.name}
+                  onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking input
+                  onChange={(e) => {
+                    const nextUnits = units.map((unit: FireUnit) => {
+                      if (unit.id !== u.id) return unit;
+                      const nextM = [...unit.members];
+                      nextM[mIdx].name = e.target.value;
+                      return { ...unit, members: nextM };
+                    });
+                    syncState({ units: nextUnits });
+                  }}
+                  style={{
+                    width: "100%",
+                    background: "#060b13",
+                    border: "1px solid #334155",
+                    borderRadius: "6px",
+                    padding: "10px",
+                    color: "white",
+                    fontSize: "14px",
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ACTION BUTTON - Always visible */}
+        <div style={{ padding: "10px 15px", background: "#0f172a" }}>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const nextUnits = units.map((unit: FireUnit) =>
+                unit.id === u.id ? { ...unit, status: "enroute" } : unit
+              );
+              syncState({ units: nextUnits });
+            }}
+            style={{
+              width: "100%",
+              background: isGhosted ? "#475569" : "#eab308",
+              color: isGhosted ? "white" : "black",
+              padding: "12px",
+              borderRadius: "8px",
+              border: "none",
+              fontWeight: "900",
+              cursor: "pointer",
+              textTransform: "uppercase",
+            }}
+          >
+            {isGhosted ? "ACTIVATE & RESPOND" : "RESPONDING"}
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div
@@ -127,7 +170,6 @@ export default function Dispatch({
         background: "#060b13",
       }}
     >
-      {/* LEFT: MAP & DETAILS */}
       <section
         style={{
           display: "flex",
@@ -150,11 +192,14 @@ export default function Dispatch({
             <div
               style={{ fontSize: "12px", color: "#38bdf8", fontWeight: "bold" }}
             >
-              BOX {incident.box} | {incident.timestamp}
+              BOX {incident.box} | {incident.call}
             </div>
-            <h1 style={{ margin: "5px 0", color: "white", fontSize: "24px" }}>
+            <h1 style={{ margin: "5px 0", color: "white", fontSize: "28px" }}>
               {incident.address}
             </h1>
+            <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+              {incident.timestamp}
+            </div>
           </div>
           <div
             style={{ textAlign: "right", color: "#94a3b8", fontSize: "11px" }}
@@ -163,21 +208,19 @@ export default function Dispatch({
           </div>
         </div>
 
-        {/* SATELLITE MAP - ZOOM 19 */}
         <div style={{ flex: 2, background: "#000" }}>
           <iframe
             title="Satellite Map"
             width="100%"
             height="100%"
             style={{ border: 0 }}
-            src={`https://maps.google.com/maps?q=${encodeURIComponent(
+            src={`https://www.google.com/maps/embed/v1/search?key=YOUR_API_KEY&q=${encodeURIComponent(
               incident.address
-            )}&t=k&z=19&output=embed`}
+            )}&maptype=satellite&zoom=19`}
             allowFullScreen
           />
         </div>
 
-        {/* INFO / COMMENTS BOX */}
         <div
           style={{
             flex: 1,
@@ -205,7 +248,7 @@ export default function Dispatch({
               fontFamily: "monospace",
               backgroundColor: "#1e293b",
               padding: "15px",
-              borderRadius: "6px",
+              borderRadius: "8px",
               border: "1px solid #334155",
             }}
           >
@@ -214,7 +257,6 @@ export default function Dispatch({
         </div>
       </section>
 
-      {/* RIGHT: UNIT CARDS */}
       <aside
         style={{ padding: "20px", overflowY: "auto", background: "#060b13" }}
       >
@@ -229,23 +271,22 @@ export default function Dispatch({
         >
           PRIMARY RESPONSE
         </h3>
-        {activeAlerts.map((u: FireUnit) => renderUnitCard(u, false))}
-
+        {activeAlerts.map((u) => renderUnitCard(u, false))}
         {ghostedAlerts.length > 0 && (
           <>
             <h3
               style={{
                 color: "#64748b",
                 fontSize: "12px",
-                marginTop: "30px",
-                marginBottom: "15px",
+                marginTop: "40px",
+                marginBottom: "20px",
                 borderTop: "1px solid #1e293b",
                 paddingTop: "20px",
               }}
             >
-              GHOSTED / INACTIVE
+              GHOSTED UNITS
             </h3>
-            {ghostedAlerts.map((u: FireUnit) => renderUnitCard(u, true))}
+            {ghostedAlerts.map((u) => renderUnitCard(u, true))}
           </>
         )}
       </aside>
