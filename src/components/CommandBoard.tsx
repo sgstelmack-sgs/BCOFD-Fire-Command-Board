@@ -6,12 +6,15 @@ const normalize = (str: string) => str?.toLowerCase().replace(/[-\s]/g, "") || "
 export default function CommandBoard({ incident, units, syncState, handleEndIncident }: any) {
   const [taskLocations, setTaskLocations] = useState<Record<string, string>>({});
 
+  const commandStaff = [
+    { id: 'ic', name: 'Incident Command' },
+    { id: 'safety', name: 'Safety Officer' },
+  ];
+
   const divisions = [
-    { id: 'ic', name: 'Incident Command', isICSRole: true },
-    { id: 'safety', name: 'Safety Officer', isICSRole: true },
-    { id: 'div-1', name: 'Division 1', isICSRole: false },
-    { id: 'div-2', name: 'Division 2', isICSRole: false },
-    { id: 'rit-div', name: 'RIT', isICSRole: false },
+    { id: 'div-1', name: 'Division 1' },
+    { id: 'div-2', name: 'Division 2' },
+    { id: 'rit-div', name: 'RIT' },
   ];
 
   const allTasks = [
@@ -21,6 +24,7 @@ export default function CommandBoard({ incident, units, syncState, handleEndInci
     { id: 'water', name: 'Water Supply' },
   ];
 
+  // --- REFINED TETHERING ENGINE ---
   const updateAssignment = (unitId: string, memberIdx: number, newAssignment: string) => {
     const nextUnits = units.map((u: FireUnit) => {
       if (u.id === unitId) {
@@ -48,8 +52,8 @@ export default function CommandBoard({ incident, units, syncState, handleEndInci
     syncState({ units: nextUnits });
   };
 
-  const onDropTask = (taskId: string, divisionId: string) => {
-    setTaskLocations(prev => ({ ...prev, [taskId]: divisionId }));
+  const onDropTask = (taskId: string, locationId: string) => {
+    setTaskLocations(prev => ({ ...prev, [taskId]: locationId }));
   };
 
   const toggleLink = (unitId: string, pair: string[]) => {
@@ -136,7 +140,7 @@ export default function CommandBoard({ incident, units, syncState, handleEndInci
           border: '1px solid #334155', cursor: 'grab', minHeight: '60px'
         }}
       >
-        <div style={{ fontSize: '12px', fontWeight: 900, color: '#38bdf8', marginBottom: '5px' }}>{task.name.toUpperCase()}</div>
+        <div style={{ fontSize: '11px', fontWeight: 900, color: '#38bdf8', marginBottom: '5px' }}>{task.name.toUpperCase()}</div>
         {assigned.map(p => renderPersonnelTag(p.unit, p.member, p.idx, 'tactical'))}
       </div>
     );
@@ -156,43 +160,73 @@ export default function CommandBoard({ incident, units, syncState, handleEndInci
         ))}
       </div>
 
-      {/* COLUMN 2: IC / DIVISIONS */}
-      <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto' }}>
-        <h3 style={{ color: '#10b981', borderBottom: '2px solid #10b981', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>IC / DIVISIONS</h3>
-        {divisions.map(div => {
-          const divPersonnel = [];
-          units.forEach(u => u.members.forEach((m, idx) => {
-            if (m.assignment === div.id) divPersonnel.push({ unit: u, member: m, idx });
-          }));
+      {/* COLUMN 2: COMMAND & OPERATIONS */}
+      <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        
+        {/* TOP SECTION: COMMAND STAFF */}
+        <div>
+          <h3 style={{ color: '#ef4444', borderBottom: '2px solid #ef4444', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>COMMAND STAFF</h3>
+          {commandStaff.map(role => {
+            const personnel = [];
+            units.forEach(u => u.members.forEach((m, idx) => {
+              if (m.assignment === role.id) personnel.push({ unit: u, member: m, idx });
+            }));
 
-          return (
-            <div 
-              key={div.id}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                const type = e.dataTransfer.getData("type");
-                if (type === "task") onDropTask(e.dataTransfer.getData("taskId"), div.id);
-                else if (type === "personnel") {
-                  const data = JSON.parse(e.dataTransfer.getData("data"));
-                  updateAssignment(data.unitId, data.idx, div.id);
-                }
-              }}
-              style={{ 
-                background: '#0f172a', padding: '15px', borderRadius: '8px', 
-                border: '1px solid #1e293b', marginBottom: '12px', minHeight: '100px' 
-              }}
-            >
-              <div style={{ color: '#94a3b8', fontSize: '14px', fontWeight: 900, marginBottom: '10px' }}>{div.name.toUpperCase()}</div>
-              {allTasks.filter(t => taskLocations[t.id] === div.id).map(renderTaskCard)}
-              {divPersonnel.length > 0 && (
-                <div style={{ marginTop: '5px' }}>
-                  {!div.isICSRole && <div style={{ fontSize: '9px', color: '#64748b', marginBottom: '5px', fontWeight: 'bold' }}>SUPERVISOR(S)</div>}
-                  {divPersonnel.map(p => renderPersonnelTag(p.unit, p.member, p.idx, 'tactical'))}
-                </div>
-              )}
-            </div>
-          );
-        })}
+            return (
+              <div 
+                key={role.id}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  const type = e.dataTransfer.getData("type");
+                  if (type === "personnel") {
+                    const data = JSON.parse(e.dataTransfer.getData("data"));
+                    updateAssignment(data.unitId, data.idx, role.id);
+                  }
+                }}
+                style={{ background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #1e293b', marginTop: '10px', minHeight: '60px' }}
+              >
+                <div style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 900, marginBottom: '8px' }}>{role.name.toUpperCase()}</div>
+                {personnel.map(p => renderPersonnelTag(p.unit, p.member, p.idx, 'tactical'))}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* BOTTOM SECTION: OPERATIONS (DIVISIONS) */}
+        <div>
+          <h3 style={{ color: '#10b981', borderBottom: '2px solid #10b981', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>OPERATIONS / DIVISIONS</h3>
+          {divisions.map(div => {
+            const divPersonnel = [];
+            units.forEach(u => u.members.forEach((m, idx) => {
+              if (m.assignment === div.id) divPersonnel.push({ unit: u, member: m, idx });
+            }));
+
+            return (
+              <div 
+                key={div.id}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  const type = e.dataTransfer.getData("type");
+                  if (type === "task") onDropTask(e.dataTransfer.getData("taskId"), div.id);
+                  else if (type === "personnel") {
+                    const data = JSON.parse(e.dataTransfer.getData("data"));
+                    updateAssignment(data.unitId, data.idx, div.id);
+                  }
+                }}
+                style={{ background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #1e293b', marginTop: '10px', minHeight: '100px' }}
+              >
+                <div style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 900, marginBottom: '10px' }}>{div.name.toUpperCase()}</div>
+                {allTasks.filter(t => taskLocations[t.id] === div.id).map(renderTaskCard)}
+                {divPersonnel.length > 0 && (
+                  <div style={{ marginTop: '5px' }}>
+                    <div style={{ fontSize: '9px', color: '#64748b', marginBottom: '5px', fontWeight: 'bold' }}>SUPERVISOR(S)</div>
+                    {divPersonnel.map(p => renderPersonnelTag(p.unit, p.member, p.idx, 'tactical'))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* COLUMN 3: TASKS / GROUPS */}
