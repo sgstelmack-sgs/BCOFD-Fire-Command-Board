@@ -25,34 +25,53 @@ export default function Roster() {
     setLoading(true);
     try {
       // Fetch apparatus to get roles and rosters to get names
-      const { data: appData } = await supabase
+      const { data: appData, error: appError } = await supabase
         .from("apparatus")
         .select("id, roles");
-      const { data: rosterData } = await supabase.from("rosters").select("*");
+      const { data: rosterData, error: rosterError } = await supabase
+        .from("rosters")
+        .select("*");
+
+      if (appError || rosterError)
+        throw new Error("Database connection failed");
 
       if (appData) {
         const combined = appData.map((app) => {
-          const existing = rosterData?.find((r) => r.id === app.id);
+          // Safety: Fallback for missing IDs
+          const unitId = app.id || "Unknown Unit";
 
-          // Fallback logic for members
-          let membersArray = [];
+          const existing = rosterData?.find((r) => r.id === unitId);
+
+          let membersArray: RosterMember[] = [];
+
+          // Safety: Check if members is actually an array
           if (existing && Array.isArray(existing.members)) {
             membersArray = existing.members;
           } else {
             // Build from apparatus roles if no roster saved
+            // Handle if roles is a string or array (PG Array fix)
             const rolesList = Array.isArray(app.roles) ? app.roles : [];
             membersArray = rolesList.map((r: string) => ({
-              role: r,
+              role: r || "Member",
               name: "",
               rank: "",
             }));
           }
 
-          return { id: app.id, members: membersArray };
+          return { id: unitId, members: membersArray };
         });
 
-        // Simple alphabetical sort - very stable
-        setRosters(combined.sort((a, b) => a.id.localeCompare(b.id)));
+        // ROBUST SORT: Handles nulls and alphanumeric IDs correctly
+        const sorted = combined.sort((a, b) => {
+          const idA = a.id || "";
+          const idB = b.id || "";
+          return idA.localeCompare(idB, undefined, {
+            numeric: true,
+            sensitivity: "base",
+          });
+        });
+
+        setRosters(sorted);
       }
     } catch (err) {
       console.error("Roster Load Error:", err);
@@ -85,8 +104,8 @@ export default function Roster() {
     }
   };
 
-  const filteredRosters = rosters.filter((r) =>
-    r.id.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredRosters = (rosters || []).filter((r) =>
+    r.id?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading)
@@ -109,7 +128,7 @@ export default function Roster() {
         <h2 style={{ color: "white", margin: 0 }}>Apparatus Rosters</h2>
         <input
           type="text"
-          placeholder="Filter units..."
+          placeholder="Filter units (e.g. 47)..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{
@@ -119,6 +138,7 @@ export default function Roster() {
             border: "1px solid #1e293b",
             color: "white",
             width: "300px",
+            outline: "none",
           }}
         />
       </div>
@@ -170,7 +190,7 @@ export default function Roster() {
                       fontWeight: "bold",
                     }}
                   >
-                    {m.role?.toUpperCase()}
+                    {m.role?.toUpperCase() || "MEMBER"}
                   </div>
                   <div style={{ display: "flex", gap: "5px" }}>
                     <select
