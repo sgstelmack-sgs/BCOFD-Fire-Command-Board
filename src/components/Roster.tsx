@@ -2,16 +2,15 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
 
 /**
- * CAPTAIN'S NOTES: BCFD COMMAND ROSTER
- * - Strict Sorting: Uses database columns 'battalion_id' and 'station_id'
- * to prevent rigs like M118 from ghosting into Station 11.
- * - Local State: Changes stay in the card (turning the border yellow)
- * until 'SAVE UNIT' is pressed.
- * - Extra Personnel: Instant green '+' adds "[Unit] Extra" with trash can deletion.
+ * CAPTAIN'S NOTES: BCoFD COMMAND ROSTER
+ * - Title updated to BCoFD Roster.
+ * - Double-Bucket: Battalion -> Service Type (Career/Vol) -> Station.
+ * - Dynamic Deployment: Allows adding temporary/reserve units to any station.
  */
 export default function Roster() {
   const [hierarchy, setHierarchy] = useState<any>({});
   const [expandedBN, setExpandedBN] = useState<string[]>([]);
+  const [expandedType, setExpandedType] = useState<string[]>([]);
   const [expandedST, setExpandedST] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<{
@@ -35,112 +34,152 @@ export default function Roster() {
     const { data: apparatus } = await supabase.from("apparatus").select("*");
     const { data: rosters } = await supabase.from("rosters").select("*");
 
+    const battalionMap: { [key: string]: string } = {};
+    [
+      "1",
+      "10",
+      "11",
+      "14",
+      "17",
+      "29",
+      "30",
+      "38",
+      "39",
+      "44",
+      "45",
+      "47",
+      "49",
+      "50",
+      "53",
+      "60",
+    ].forEach((s) => (battalionMap[s] = "B1"));
+    [
+      "2",
+      "3",
+      "4",
+      "5",
+      "13",
+      "18",
+      "19",
+      "31",
+      "23",
+      "33",
+      "35",
+      "36",
+      "37",
+      "40",
+      "41",
+      "42",
+      "43",
+      "46",
+      "56",
+      "85",
+    ].forEach((s) => (battalionMap[s] = "B2"));
+    [
+      "6",
+      "7",
+      "8",
+      "9",
+      "12",
+      "15",
+      "16",
+      "20",
+      "21",
+      "22",
+      "24",
+      "25",
+      "26",
+      "27",
+      "28",
+      "48",
+      "51",
+      "52",
+      "54",
+      "55",
+      "57",
+      "58",
+      "74",
+    ].forEach((s) => (battalionMap[s] = "B3"));
+
     if (apparatus) {
       const nested: any = {};
-
       apparatus.forEach((u: any) => {
-        // FORCE database column values and trim whitespace
-        const bn = String(u.battalion_id || "UNASSIGNED").trim();
         const st = String(u.station_id || "MISC").trim();
+        const bn =
+          battalionMap[st] || String(u.battalion_id || "UNASSIGNED").trim();
+        const typeKey = u.is_career ? "Career" : "Volunteer";
+
+        if (!nested[bn]) nested[bn] = {};
+        if (!nested[bn][typeKey]) nested[bn][typeKey] = {};
+        if (!nested[bn][typeKey][st]) nested[bn][typeKey][st] = [];
 
         const savedRoster = rosters?.find((r) => r.unit_id === u.id);
         const currentMembers =
           savedRoster?.members ||
-          u.roles.map((role: string) => ({
-            role,
-            name: "",
-          }));
-
-        if (!nested[bn]) nested[bn] = {};
-        if (!nested[bn][st]) nested[bn][st] = [];
-
-        nested[bn][st].push({ ...u, currentMembers });
+          u.roles.map((role: string) => ({ role, name: "" }));
+        nested[bn][typeKey][st].push({ ...u, currentMembers });
       });
       setHierarchy(nested);
     }
     setLoading(false);
-    setDirtyUnits([]);
   };
 
-  const handleLocalUpdate = (unitId: string, role: string, newName: string) => {
-    const newHierarchy = { ...hierarchy };
-    for (const bn in newHierarchy) {
-      for (const st in newHierarchy[bn]) {
-        newHierarchy[bn][st] = newHierarchy[bn][st].map((u: any) => {
-          if (u.id === unitId) {
-            return {
-              ...u,
-              currentMembers: u.currentMembers.map((m: any) =>
-                m.role === role ? { ...m, name: newName } : m
-              ),
-            };
-          }
-          return u;
-        });
-      }
-    }
-    setHierarchy(newHierarchy);
-    if (!dirtyUnits.includes(unitId)) setDirtyUnits([...dirtyUnits, unitId]);
-    setEditing(null);
+  const deployNewUnit = (bn: string, type: string, st: string) => {
+    const unitId = window.prompt(
+      "Enter Unit ID (e.g. E472, RS3, Reserve Truck):"
+    );
+    if (!unitId) return;
+
+    const newUnit = {
+      id: unitId.toUpperCase(),
+      station_id: st,
+      battalion_id: bn,
+      is_career: type === "Career",
+      type: "ENGINE",
+      roles: ["Officer", "Driver", "Nozzle", "Backup"],
+      currentMembers: [
+        { role: "Officer", name: "" },
+        { role: "Driver", name: "" },
+        { role: "Nozzle", name: "" },
+        { role: "Backup", name: "" },
+      ],
+    };
+
+    const next = { ...hierarchy };
+    next[bn][type][st].push(newUnit);
+    setHierarchy(next);
+    if (!dirtyUnits.includes(newUnit.id))
+      setDirtyUnits([...dirtyUnits, newUnit.id]);
+
+    const stKey = `${bn}-${type}-${st}`;
+    if (!expandedST.includes(stKey)) setExpandedST([...expandedST, stKey]);
   };
 
-  const addExtraMember = (unitId: string) => {
-    const newHierarchy = { ...hierarchy };
-    for (const bn in newHierarchy) {
-      for (const st in newHierarchy[bn]) {
-        newHierarchy[bn][st] = newHierarchy[bn][st].map((u: any) => {
-          if (u.id === unitId) {
-            const extraCount =
-              u.currentMembers.filter((m: any) => m.role.includes("Extra"))
-                .length + 1;
-            const roleName = `${unitId} Extra ${
-              extraCount > 1 ? extraCount : ""
-            }`.trim();
-            return {
-              ...u,
-              currentMembers: [
-                ...u.currentMembers,
-                { role: roleName, name: "", isExtra: true },
-              ],
-            };
-          }
-          return u;
-        });
+  const findAndUpdateUnit = (unitId: string, updater: (u: any) => any) => {
+    const next = { ...hierarchy };
+    for (let bn in next) {
+      for (let type in next[bn]) {
+        for (let st in next[bn][type]) {
+          next[bn][type][st] = next[bn][type][st].map((u: any) =>
+            u.id === unitId ? updater(u) : u
+          );
+        }
       }
     }
-    setHierarchy(newHierarchy);
-    if (!dirtyUnits.includes(unitId)) setDirtyUnits([...dirtyUnits, unitId]);
-  };
-
-  const removeMember = (unitId: string, role: string) => {
-    const newHierarchy = { ...hierarchy };
-    for (const bn in newHierarchy) {
-      for (const st in newHierarchy[bn]) {
-        newHierarchy[bn][st] = newHierarchy[bn][st].map((u: any) => {
-          if (u.id === unitId) {
-            return {
-              ...u,
-              currentMembers: u.currentMembers.filter(
-                (m: any) => m.role !== role
-              ),
-            };
-          }
-          return u;
-        });
-      }
-    }
-    setHierarchy(newHierarchy);
+    setHierarchy(next);
     if (!dirtyUnits.includes(unitId)) setDirtyUnits([...dirtyUnits, unitId]);
   };
 
   const saveUnitRoster = async (unitId: string) => {
     let targetUnit: any = null;
-    for (const bn in hierarchy) {
-      for (const st in hierarchy[bn]) {
-        const found = hierarchy[bn][st].find((u: any) => u.id === unitId);
-        if (found) targetUnit = found;
-      }
-    }
+    Object.values(hierarchy).forEach((bn: any) =>
+      Object.values(bn).forEach((type: any) =>
+        Object.values(type).forEach((st: any) => {
+          const found = st.find((u: any) => u.id === unitId);
+          if (found) targetUnit = found;
+        })
+      )
+    );
 
     if (targetUnit) {
       const { error } = await supabase.from("rosters").upsert(
@@ -151,31 +190,9 @@ export default function Roster() {
         },
         { onConflict: "unit_id" }
       );
-
-      if (!error) {
-        setDirtyUnits(dirtyUnits.filter((id) => id !== unitId));
-      } else {
-        alert("Check Console: Save Failed");
-        console.error(error);
-      }
+      if (!error) setDirtyUnits(dirtyUnits.filter((id) => id !== unitId));
     }
   };
-
-  const toggleMedicalMode = async (unitId: string, current: string) => {
-    const next = current === "ALS" ? "BLS" : "ALS";
-    await supabase
-      .from("apparatus")
-      .update({ medical_mode: next })
-      .eq("id", unitId);
-    fetchRosters();
-  };
-
-  if (loading)
-    return (
-      <div style={{ padding: "50px", color: "#38bdf8", textAlign: "center" }}>
-        Loading Roster...
-      </div>
-    );
 
   return (
     <div
@@ -187,10 +204,11 @@ export default function Roster() {
         fontFamily: "sans-serif",
       }}
     >
+      {/* UPDATED TITLE HERE */}
       <h2
-        style={{ marginBottom: "25px", color: "#f8fafc", letterSpacing: "1px" }}
+        style={{ marginBottom: "25px", letterSpacing: "1px", fontWeight: 900 }}
       >
-        BCFD Command Roster
+        BCoFD ROSTER
       </h2>
 
       {Object.keys(hierarchy)
@@ -205,7 +223,6 @@ export default function Roster() {
               overflow: "hidden",
             }}
           >
-            {/* Battalion Header */}
             <div
               onClick={() =>
                 setExpandedBN((prev) =>
@@ -223,282 +240,338 @@ export default function Roster() {
                 alignItems: "center",
               }}
             >
-              <span style={{ color: "#facc15", fontWeight: "bold" }}>
+              <span
+                style={{
+                  color: "#facc15",
+                  fontWeight: 900,
+                  fontSize: "1.1rem",
+                }}
+              >
                 {bnLabels[bn] || bn}
               </span>
-              <span style={{ fontSize: "12px", color: "#94a3b8" }}>
-                {expandedBN.includes(bn) ? "▼" : "▶"}
-              </span>
+              <span>{expandedBN.includes(bn) ? "▼" : "▶"}</span>
             </div>
 
             {expandedBN.includes(bn) && (
-              <div style={{ padding: "12px", background: "#0f172a" }}>
-                {Object.keys(hierarchy[bn])
-                  .sort((a, b) => parseInt(a) - parseInt(b))
-                  .map((st) => {
-                    const stKey = `${bn}-${st}`;
-                    return (
+              <div style={{ padding: "10px", background: "#0f172a" }}>
+                {["Career", "Volunteer"].map((type) => {
+                  if (!hierarchy[bn][type]) return null;
+                  const typeKey = `${bn}-${type}`;
+                  const isTypeExp = expandedType.includes(typeKey);
+
+                  return (
+                    <div
+                      key={type}
+                      style={{
+                        marginBottom: "10px",
+                        borderRadius: "6px",
+                        border: "1px solid #1e293b",
+                        overflow: "hidden",
+                      }}
+                    >
                       <div
-                        key={st}
+                        onClick={() =>
+                          setExpandedType((prev) =>
+                            prev.includes(typeKey)
+                              ? prev.filter((i) => i !== typeKey)
+                              : [...prev, typeKey]
+                          )
+                        }
                         style={{
-                          marginBottom: "10px",
-                          border: "1px solid #334155",
-                          borderRadius: "6px",
-                          overflow: "hidden",
+                          background: isTypeExp ? "#1e293b" : "#111827",
+                          padding: "10px 15px",
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
                         }}
                       >
-                        {/* Station Header */}
-                        <div
-                          onClick={() =>
-                            setExpandedST((prev) =>
-                              prev.includes(stKey)
-                                ? prev.filter((i) => i !== stKey)
-                                : [...prev, stKey]
-                            )
-                          }
+                        <span
                           style={{
-                            padding: "12px 18px",
-                            cursor: "pointer",
-                            color: "#38bdf8",
-                            background: "#060b13",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
+                            color: type === "Career" ? "#38bdf8" : "#94a3b8",
+                            fontWeight: 800,
+                            fontSize: "11px",
                           }}
                         >
-                          <span style={{ fontWeight: "600" }}>
-                            Station {st}
-                          </span>
-                          <span>{expandedST.includes(stKey) ? "−" : "+"}</span>
-                        </div>
+                          {type.toUpperCase()} STATIONS
+                        </span>
+                        <span>{isTypeExp ? "▼" : "▶"}</span>
+                      </div>
 
-                        {/* Apparatus Grid */}
-                        {expandedST.includes(stKey) && (
-                          <div
-                            style={{
-                              padding: "15px",
-                              display: "grid",
-                              gridTemplateColumns:
-                                "repeat(auto-fill, minmax(320px, 1fr))",
-                              gap: "15px",
-                              background: "#0f172a",
-                            }}
-                          >
-                            {hierarchy[bn][st].map((unit: any) => {
-                              const displayId =
-                                unit.type === "MEDIC" &&
-                                unit.medical_mode === "BLS"
-                                  ? unit.id.replace("M", "A")
-                                  : unit.id;
+                      {isTypeExp && (
+                        <div style={{ padding: "10px", background: "#060b13" }}>
+                          {Object.keys(hierarchy[bn][type])
+                            .sort((a, b) => parseInt(a) - parseInt(b))
+                            .map((st) => {
+                              const stKey = `${typeKey}-${st}`;
+                              const isStExp = expandedST.includes(stKey);
 
                               return (
                                 <div
-                                  key={unit.id}
+                                  key={st}
                                   style={{
-                                    background: "#111827",
-                                    padding: "15px",
-                                    borderRadius: "8px",
-                                    border: dirtyUnits.includes(unit.id)
-                                      ? "1px solid #facc15"
-                                      : "1px solid #1e293b",
+                                    marginBottom: "8px",
+                                    border: "1px solid #334155",
+                                    borderRadius: "4px",
+                                    overflow: "hidden",
                                   }}
                                 >
                                   <div
                                     style={{
+                                      padding: "8px 15px",
+                                      background: "#0f172a",
                                       display: "flex",
                                       justifyContent: "space-between",
                                       alignItems: "center",
-                                      marginBottom: "10px",
-                                      borderBottom: "1px solid #1e293b",
-                                      paddingBottom: "8px",
                                     }}
                                   >
-                                    <strong
-                                      style={{
-                                        color: "#f8fafc",
-                                        fontSize: "1.2rem",
-                                      }}
-                                    >
-                                      {displayId}
-                                    </strong>
                                     <div
+                                      onClick={() =>
+                                        setExpandedST((prev) =>
+                                          prev.includes(stKey)
+                                            ? prev.filter((i) => i !== stKey)
+                                            : [...prev, stKey]
+                                        )
+                                      }
                                       style={{
-                                        display: "flex",
-                                        gap: "8px",
-                                        alignItems: "center",
+                                        cursor: "pointer",
+                                        flex: 1,
+                                        fontWeight: 600,
+                                        fontSize: "13px",
                                       }}
                                     >
-                                      {unit.type === "MEDIC" && (
-                                        <button
-                                          onClick={() =>
-                                            toggleMedicalMode(
-                                              unit.id,
-                                              unit.medical_mode
-                                            )
-                                          }
-                                          style={{
-                                            background:
-                                              unit.medical_mode === "ALS"
-                                                ? "#991b1b"
-                                                : "#166534",
-                                            color: "white",
-                                            border: "none",
-                                            borderRadius: "4px",
-                                            cursor: "pointer",
-                                            fontSize: "10px",
-                                            padding: "4px 8px",
-                                          }}
-                                        >
-                                          {unit.medical_mode}
-                                        </button>
-                                      )}
-                                      <button
-                                        onClick={() => addExtraMember(unit.id)}
-                                        style={{
-                                          background: "#166534",
-                                          color: "white",
-                                          border: "none",
-                                          borderRadius: "50%",
-                                          width: "24px",
-                                          height: "24px",
-                                          fontSize: "16px",
-                                          fontWeight: "bold",
-                                          cursor: "pointer",
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "center",
-                                        }}
-                                      >
-                                        +
-                                      </button>
+                                      <span style={{ marginRight: "10px" }}>
+                                        {isStExp ? "−" : "+"}
+                                      </span>
+                                      Station {st}
                                     </div>
+                                    <button
+                                      onClick={() =>
+                                        deployNewUnit(bn, type, st)
+                                      }
+                                      style={{
+                                        background: "transparent",
+                                        color: "#38bdf8",
+                                        border: "1px solid #38bdf8",
+                                        borderRadius: "4px",
+                                        fontSize: "10px",
+                                        padding: "2px 8px",
+                                        cursor: "pointer",
+                                        fontWeight: "bold",
+                                      }}
+                                    >
+                                      + UNIT
+                                    </button>
                                   </div>
 
-                                  {unit.currentMembers.map(
-                                    (m: any, i: number) => (
-                                      <div
-                                        key={i}
-                                        style={{
-                                          fontSize: "12px",
-                                          color: "#94a3b8",
-                                          display: "flex",
-                                          justifyContent: "space-between",
-                                          marginBottom: "8px",
-                                          alignItems: "center",
-                                        }}
-                                      >
-                                        <div
-                                          style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: "6px",
-                                          }}
-                                        >
-                                          {(m.isExtra ||
-                                            m.role.includes("Extra")) && (
-                                            <span
-                                              onClick={() =>
-                                                removeMember(unit.id, m.role)
-                                              }
-                                              style={{
-                                                color: "#ef4444",
-                                                cursor: "pointer",
-                                                fontSize: "14px",
-                                              }}
-                                            >
-                                              🗑️
-                                            </span>
-                                          )}
-                                          <span
-                                            style={{
-                                              fontWeight: "bold",
-                                              fontSize: "10px",
-                                              textTransform: "uppercase",
-                                            }}
-                                          >
-                                            {m.role}
-                                          </span>
-                                        </div>
-                                        {editing?.unitId === unit.id &&
-                                        editing?.role === m.role ? (
-                                          <input
-                                            autoFocus
-                                            defaultValue={m.name}
-                                            onBlur={(e) =>
-                                              handleLocalUpdate(
-                                                unit.id,
-                                                m.role,
-                                                e.target.value
-                                              )
-                                            }
-                                            onKeyDown={(e) =>
-                                              e.key === "Enter" &&
-                                              handleLocalUpdate(
-                                                unit.id,
-                                                m.role,
-                                                (e.target as HTMLInputElement)
-                                                  .value
-                                              )
-                                            }
-                                            style={{
-                                              background: "#1e293b",
-                                              color: "#38bdf8",
-                                              border: "1px solid #38bdf8",
-                                              borderRadius: "3px",
-                                              width: "60%",
-                                              padding: "2px 5px",
-                                            }}
-                                          />
-                                        ) : (
-                                          <span
-                                            onClick={() =>
-                                              setEditing({
-                                                unitId: unit.id,
-                                                role: m.role,
-                                              })
-                                            }
-                                            style={{
-                                              color: m.name
-                                                ? "#f8fafc"
-                                                : "#334155",
-                                              cursor: "pointer",
-                                              borderBottom:
-                                                "1px dashed #334155",
-                                            }}
-                                          >
-                                            {m.name || "VACANT"}
-                                          </span>
-                                        )}
-                                      </div>
-                                    )
-                                  )}
-
-                                  {dirtyUnits.includes(unit.id) && (
-                                    <button
-                                      onClick={() => saveUnitRoster(unit.id)}
+                                  {isStExp && (
+                                    <div
                                       style={{
-                                        width: "100%",
-                                        marginTop: "10px",
-                                        background: "#facc15",
-                                        color: "#060b13",
-                                        border: "none",
-                                        borderRadius: "4px",
-                                        padding: "8px",
-                                        fontWeight: "bold",
-                                        cursor: "pointer",
+                                        padding: "12px",
+                                        display: "grid",
+                                        gridTemplateColumns:
+                                          "repeat(auto-fill, minmax(280px, 1fr))",
+                                        gap: "12px",
+                                        background: "#111827",
                                       }}
                                     >
-                                      SAVE UNIT
-                                    </button>
+                                      {hierarchy[bn][type][st].map(
+                                        (unit: any) => (
+                                          <div
+                                            key={unit.id}
+                                            style={{
+                                              background: "#060b13",
+                                              padding: "12px",
+                                              borderRadius: "6px",
+                                              border: dirtyUnits.includes(
+                                                unit.id
+                                              )
+                                                ? "1px solid #facc15"
+                                                : "1px solid #1e293b",
+                                            }}
+                                          >
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                marginBottom: "8px",
+                                              }}
+                                            >
+                                              <strong
+                                                style={{ color: "#38bdf8" }}
+                                              >
+                                                {unit.id}
+                                              </strong>
+                                              <button
+                                                onClick={() =>
+                                                  findAndUpdateUnit(
+                                                    unit.id,
+                                                    (u) => ({
+                                                      ...u,
+                                                      currentMembers: [
+                                                        ...u.currentMembers,
+                                                        {
+                                                          role: `${u.id} Extra`,
+                                                          name: "",
+                                                          isExtra: true,
+                                                        },
+                                                      ],
+                                                    })
+                                                  )
+                                                }
+                                                style={{
+                                                  background: "#166534",
+                                                  color: "white",
+                                                  border: "none",
+                                                  borderRadius: "50%",
+                                                  width: "20px",
+                                                  height: "20px",
+                                                  cursor: "pointer",
+                                                }}
+                                              >
+                                                +
+                                              </button>
+                                            </div>
+                                            {unit.currentMembers.map(
+                                              (m: any, idx: number) => (
+                                                <div
+                                                  key={idx}
+                                                  style={{
+                                                    fontSize: "11px",
+                                                    display: "flex",
+                                                    justifyContent:
+                                                      "space-between",
+                                                    marginBottom: "5px",
+                                                  }}
+                                                >
+                                                  <div
+                                                    style={{
+                                                      display: "flex",
+                                                      gap: "5px",
+                                                    }}
+                                                  >
+                                                    {m.isExtra && (
+                                                      <span
+                                                        onClick={() =>
+                                                          findAndUpdateUnit(
+                                                            unit.id,
+                                                            (u) => ({
+                                                              ...u,
+                                                              currentMembers:
+                                                                u.currentMembers.filter(
+                                                                  (mem: any) =>
+                                                                    mem.role !==
+                                                                    m.role
+                                                                ),
+                                                            })
+                                                          )
+                                                        }
+                                                        style={{
+                                                          color: "#ef4444",
+                                                          cursor: "pointer",
+                                                        }}
+                                                      >
+                                                        🗑️
+                                                      </span>
+                                                    )}
+                                                    <span
+                                                      style={{
+                                                        color: "#64748b",
+                                                        fontWeight: "bold",
+                                                      }}
+                                                    >
+                                                      {m.role}
+                                                    </span>
+                                                  </div>
+                                                  <span
+                                                    onClick={() =>
+                                                      setEditing({
+                                                        unitId: unit.id,
+                                                        role: m.role,
+                                                      })
+                                                    }
+                                                    style={{
+                                                      color: m.name
+                                                        ? "white"
+                                                        : "#334155",
+                                                      cursor: "pointer",
+                                                    }}
+                                                  >
+                                                    {editing?.unitId ===
+                                                      unit.id &&
+                                                    editing?.role === m.role ? (
+                                                      <input
+                                                        autoFocus
+                                                        defaultValue={m.name}
+                                                        onBlur={(e) => {
+                                                          findAndUpdateUnit(
+                                                            unit.id,
+                                                            (u) => ({
+                                                              ...u,
+                                                              currentMembers:
+                                                                u.currentMembers.map(
+                                                                  (mem: any) =>
+                                                                    mem.role ===
+                                                                    m.role
+                                                                      ? {
+                                                                          ...mem,
+                                                                          name: e
+                                                                            .target
+                                                                            .value,
+                                                                        }
+                                                                      : mem
+                                                                ),
+                                                            })
+                                                          );
+                                                          setEditing(null);
+                                                        }}
+                                                        style={{
+                                                          background: "#1e293b",
+                                                          color: "white",
+                                                          border:
+                                                            "1px solid #38bdf8",
+                                                          width: "80px",
+                                                        }}
+                                                      />
+                                                    ) : (
+                                                      m.name || "VACANT"
+                                                    )}
+                                                  </span>
+                                                </div>
+                                              )
+                                            )}
+                                            {dirtyUnits.includes(unit.id) && (
+                                              <button
+                                                onClick={() =>
+                                                  saveUnitRoster(unit.id)
+                                                }
+                                                style={{
+                                                  width: "100%",
+                                                  background: "#facc15",
+                                                  color: "black",
+                                                  border: "none",
+                                                  borderRadius: "4px",
+                                                  fontSize: "10px",
+                                                  padding: "4px",
+                                                  marginTop: "5px",
+                                                  fontWeight: "bold",
+                                                }}
+                                              >
+                                                SAVE UNIT
+                                              </button>
+                                            )}
+                                          </div>
+                                        )
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               );
                             })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
