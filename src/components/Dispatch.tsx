@@ -1,7 +1,13 @@
 import React, { useState } from "react";
 import { supabase } from "../supabaseClient";
-import { FireUnit } from "../App"; // Import the interface
+import { FireUnit } from "../App";
 
+/**
+ * DISPATCH SCREEN
+ * Layout:
+ * - Top Header: Row 1 (Call Type), Row 2 (Box, Address, Incident ID)
+ * - Main: Left (Map & Narrative), Right (Unit Accountability Sidebar)
+ */
 export default function Dispatch({ incident, units, syncState }: any) {
   const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
   const [editingMember, setEditingMember] = useState<{
@@ -9,6 +15,7 @@ export default function Dispatch({ incident, units, syncState }: any) {
     idx: number;
   } | null>(null);
 
+  // Grouping logic for the unit sidebar
   const activeUnits = units.filter((u: FireUnit) => !u.isGhosted);
   const ghostedUnits = units.filter((u: FireUnit) => u.isGhosted);
 
@@ -246,48 +253,106 @@ export default function Dispatch({ incident, units, syncState }: any) {
           borderRight: "2px solid #1e293b",
         }}
       >
+        {/* --- STACKED HEADER START --- */}
         <div
-          style={{
-            background: "#111827",
-            padding: "20px 30px",
-            display: "flex",
-            gap: "40px",
-            borderBottom: "4px solid #ef4444",
-          }}
+          style={{ background: "#111827", borderBottom: "4px solid #ef4444" }}
         >
-          <div>
+          {/* ROW 1: CALL TYPE */}
+          <div
+            style={{
+              padding: "15px 30px",
+              borderBottom: "1px solid #1e293b",
+              background: "rgba(250, 204, 21, 0.05)",
+            }}
+          >
             <small
-              style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "bold" }}
+              style={{
+                color: "#94a3b8",
+                fontSize: "12px",
+                fontWeight: "bold",
+                letterSpacing: "1px",
+              }}
             >
-              BOX
-            </small>
-            <div style={{ fontSize: "32px", fontWeight: 900 }}>
-              {incident.box}
-            </div>
-          </div>
-          <div style={{ flex: 1 }}>
-            <small
-              style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "bold" }}
-            >
-              ADDRESS
+              CALL TYPE
             </small>
             <div
-              style={{ fontSize: "32px", fontWeight: 900, color: "#38bdf8" }}
+              style={{
+                fontSize: "42px",
+                fontWeight: 900,
+                color: "#facc15",
+                lineHeight: "1",
+              }}
             >
-              {incident.address}
+              {incident.callType}
             </div>
           </div>
-          <div style={{ textAlign: "right" }}>
-            <small
-              style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "bold" }}
-            >
-              INCIDENT #
-            </small>
-            <div style={{ fontSize: "24px", fontWeight: 700, opacity: 0.8 }}>
-              {incident.id}
+
+          {/* ROW 2: BOX, ADDRESS, INCIDENT # */}
+          <div
+            style={{
+              padding: "15px 30px",
+              display: "flex",
+              gap: "40px",
+              alignItems: "center",
+            }}
+          >
+            <div>
+              <small
+                style={{
+                  color: "#94a3b8",
+                  fontSize: "12px",
+                  fontWeight: "bold",
+                }}
+              >
+                BOX
+              </small>
+              <div
+                style={{ fontSize: "32px", fontWeight: 900, color: "#f8fafc" }}
+              >
+                {incident.box}
+              </div>
+            </div>
+            <div style={{ flex: 1 }}>
+              <small
+                style={{
+                  color: "#94a3b8",
+                  fontSize: "12px",
+                  fontWeight: "bold",
+                }}
+              >
+                ADDRESS
+              </small>
+              <div
+                style={{ fontSize: "32px", fontWeight: 900, color: "#38bdf8" }}
+              >
+                {incident.address}
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <small
+                style={{
+                  color: "#94a3b8",
+                  fontSize: "12px",
+                  fontWeight: "bold",
+                }}
+              >
+                INCIDENT #
+              </small>
+              <div
+                style={{
+                  fontSize: "24px",
+                  fontWeight: 700,
+                  color: "#f8fafc",
+                  opacity: 0.8,
+                }}
+              >
+                {incident.id}
+              </div>
             </div>
           </div>
         </div>
+        {/* --- STACKED HEADER END --- */}
+
         <div style={{ flex: 1 }}>
           <iframe
             title="Map"
@@ -298,6 +363,7 @@ export default function Dispatch({ incident, units, syncState }: any) {
             allowFullScreen
           ></iframe>
         </div>
+
         <div
           style={{
             height: "250px",
