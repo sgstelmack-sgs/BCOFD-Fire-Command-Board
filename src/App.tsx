@@ -6,10 +6,10 @@ import CommandBoard from "./components/CommandBoard";
 import Roster from "./components/Roster";
 
 /**
- * CAPTAIN'S NOTES: ROSTER-FIRST ARCHITECTURE
- * - Roster Boss: If a roster exists, it defines the crew size and roles (Fixes Medic 2-spot vs 4-spot issue).
- * - Partial Match: Bridges the gap between "Officer" and "Officer (P1)".
- * - Real-time: Syncs state across all incident tablets.
+ * CAPTAIN'S NOTES: STRICT ROSTER ARCHITECTURE
+ * - Source of Truth: If a roster has >0 members, apparatus default roles are IGNORED.
+ * - Shorthand Logic: Handles M19/A19 mismatches by guessing type from the ID.
+ * - Missing Units: Unknown units are logged to 'missing_apparatus' for later review.
  */
 
 export interface FireUnit {
@@ -33,6 +33,7 @@ export interface Incident {
   active: boolean;
 }
 
+// BCoFD TACTICAL COLORS
 export const getUnitColor = (type: string) => {
   const t = type?.toUpperCase() || "";
   if (t.includes("ENGINE") || t.startsWith("E")) return "#1e40af"; // Blue
@@ -67,6 +68,7 @@ export default function App() {
   const [incident, setIncident] = useState<Incident | null>(null);
   const [units, setUnits] = useState<FireUnit[]>([]);
 
+  // Real-time Sync
   useEffect(() => {
     if (!incident?.id) return;
     const channel = supabase
@@ -98,9 +100,13 @@ export default function App() {
     };
   }, [incident?.id]);
 
+  /**
+   * CAD PARSING & ROSTER EXTRACTION
+   */
   const handleStartIncident = async (notes: string) => {
     try {
       const clean = notes.replace(/\n/g, " ").replace(/\s\s+/g, " ");
+
       const callRawMatch = clean.match(
         /CALL:\s*\S+\s*-\s*(.*?)(?=\s*(ADDR:|UNIT:|$))/i
       );
@@ -124,6 +130,7 @@ export default function App() {
           const isGhost = lookupId.startsWith("G") && lookupId.length > 2;
           if (isGhost) lookupId = lookupId.substring(1);
 
+          // Fetch Data from Supabase
           const { data: appData } = await supabase
             .from("apparatus")
             .select("*")
@@ -135,7 +142,7 @@ export default function App() {
             .eq("unit_id", lookupId)
             .maybeSingle();
 
-          // Logging missing units
+          // Safety Logger
           if (!appData && !isGhost) {
             supabase
               .from("missing_apparatus")
@@ -143,9 +150,7 @@ export default function App() {
                 {
                   id: lookupId,
                   last_incident_id: idMatch ? idMatch[1] : "UNKNOWN",
-                  suggested_type: /^E\d/.test(lookupId)
-                    ? "ENGINE"
-                    : /^A\d|^M\d/.test(lookupId)
+                  suggested_type: /^A\d|^M\d/.test(lookupId)
                     ? "MEDIC"
                     : "OTHER",
                 },
@@ -154,24 +159,26 @@ export default function App() {
               .then();
           }
 
+          // Tactical Shorthand Logic
           let tacticalType = appData?.type || "OTHER";
           if (tacticalType === "OTHER") {
             if (/^E\d/.test(lookupId)) tacticalType = "ENGINE";
             else if (/^T\d|^TW\d|^L\d/.test(lookupId)) tacticalType = "TRUCK";
             else if (/^M\d|^A\d/.test(lookupId)) tacticalType = "MEDIC";
+            else if (/^B\d|^D\d|^CH\d/.test(lookupId)) tacticalType = "CHIEF";
           }
 
-          // --- THE ROSTER-FIRST INJECTOR ---
+          // --- THE STRICT ROSTER RULE ---
           let members = [];
           if (rosterData?.members && rosterData.members.length > 0) {
-            // ROSTER IS BOSS: Show exactly what is saved, no extra spots.
+            // If roster exists, it is the BOSS. Use only these members.
             members = rosterData.members.map((m: any) => ({
               role: m.role,
               name: m.name || `${lookupId} ${m.role}`,
               assignment: "Unassigned",
             }));
           } else {
-            // FALLBACK: Use apparatus defaults if no roster is set.
+            // If NO roster, fallback to apparatus defaults.
             const defaultRoles = appData?.roles || [
               "Officer",
               "Driver",
@@ -220,7 +227,7 @@ export default function App() {
         },
       ]);
     } catch (e) {
-      console.error(e);
+      console.error("Incident Start Error:", e);
     }
   };
 
@@ -308,7 +315,7 @@ export default function App() {
             style={getTabStyle("command")}
             onClick={() => setView("command")}
           >
-            Command Board
+            Command
           </button>
         )}
         <button style={getTabStyle("roster")} onClick={() => setView("roster")}>
