@@ -5,10 +5,6 @@ import Dispatch from "./components/Dispatch";
 import CommandBoard from "./components/CommandBoard";
 import Roster from "./components/Roster";
 
-/**
- * CAPTAIN'S NOTES: GLOBAL INTERFACES
- * Defines the strict structure for Units and Incidents.
- */
 export interface FireUnit {
   id: string;
   displayId: string;
@@ -30,15 +26,41 @@ export interface Incident {
   active: boolean;
 }
 
+// MASTER TACTICAL COLORS (BCoFD Standard)
+export const getUnitColor = (type: string) => {
+  const t = type?.toUpperCase() || "";
+  if (t.includes("ENGINE") || t.startsWith("E")) return "#1e40af"; // Blue
+  if (t.includes("TRUCK") || t.includes("TOWER") || t.startsWith("T"))
+    return "#991b1b"; // Red
+  if (
+    t.includes("SQUAD") ||
+    t.includes("RESCUE") ||
+    t.startsWith("SQ") ||
+    t.startsWith("R")
+  )
+    return "#166534"; // Green
+  if (
+    t.includes("CHIEF") ||
+    t.includes("BC") ||
+    t.includes("DC") ||
+    t.startsWith("B")
+  )
+    return "#ca8a04"; // Gold
+  if (
+    t.includes("MEDIC") ||
+    t.includes("AMBULANCE") ||
+    t.startsWith("M") ||
+    t.startsWith("A")
+  )
+    return "#c2410c"; // Orange
+  return "#475569";
+};
+
 export default function App() {
   const [view, setView] = useState("pre-dispatch");
   const [incident, setIncident] = useState<Incident | null>(null);
   const [units, setUnits] = useState<FireUnit[]>([]);
 
-  /**
-   * REAL-TIME SYNCHRONIZATION
-   * Connects to Supabase to ensure all tablets on the fireground stay in sync.
-   */
   useEffect(() => {
     if (!incident?.id) return;
     const channel = supabase
@@ -56,7 +78,7 @@ export default function App() {
           const parsedState =
             typeof newState === "string" ? JSON.parse(newState) : newState;
           if (parsedState) {
-            setUnits(parsedState.units || []);
+            setUnits([...(parsedState.units || [])]);
             if (payload.new.active === false) {
               setIncident(null);
               setView("pre-dispatch");
@@ -70,113 +92,124 @@ export default function App() {
     };
   }, [incident?.id]);
 
-  /**
-   * UNIT FACTORY
-   * Translates CAD IDs into database assets and fetches saved rosters.
-   */
-  const createUnitInstance = async (
-    unitId: string,
-    forceGhost: boolean
-  ): Promise<FireUnit> => {
-    let rawId = unitId.toUpperCase().replace(/\s+/g, "");
-    let lookupId = rawId;
-
-    // Ghost Logic: Strip 'G' to find actual apparatus in database
-    if (rawId.startsWith("G") && rawId.length > 2)
-      lookupId = rawId.substring(1);
-
-    const { data: appData } = await supabase
-      .from("apparatus")
-      .select("*")
-      .eq("id", lookupId)
-      .maybeSingle();
-    const { data: rosterData } = await supabase
-      .from("rosters")
-      .select("*")
-      .eq("unit_id", lookupId)
-      .maybeSingle();
-
-    return {
-      id: lookupId,
-      displayId: lookupId,
-      status: "dispatched",
-      type: appData?.type || "ENGINE",
-      assignment: "STAGING",
-      isGhosted: forceGhost,
-      members: (
-        appData?.roles || ["Officer", "Driver", "Nozzle", "Backup"]
-      ).map((role: string) => {
-        const saved = rosterData?.members?.find((m: any) => m.role === role);
-        return {
-          role,
-          name: saved?.name || `${lookupId} ${role}`,
-          assignment: "Unassigned",
-        };
-      }),
-    };
-  };
-
-  /**
-   * CAPTAIN'S NOTES: UPDATED CAD PARSER
-   * - CallType: Skips the CAD code (e.g. SFRESD) and grabs "Main - Sub" descriptors.
-   * - Box: Automatically strips leading zeros (047-01 -> 47-01).
-   * - Narrative: Terminates exactly at the DATE: field.
-   */
   const handleStartIncident = async (notes: string) => {
-    const clean = notes.replace(/\n/g, " ").replace(/\s\s+/g, " ");
+    try {
+      const clean = notes.replace(/\n/g, " ").replace(/\s\s+/g, " ");
+      const callRawMatch = clean.match(
+        /CALL:\s*\S+\s*-\s*(.*?)(?=\s*(ADDR:|UNIT:|$))/i
+      );
+      const boxMatch = clean.match(/BOX:\s*([\d-]+)/i);
+      const addrMatch = clean.match(
+        /ADDR:\s*(.*?)(?=\s*(UNIT:|INFO:|DATE:|STA:|$))/i
+      );
+      const idMatch = clean.match(/ID:\s*([A-Z0-9-]+)/i);
+      const unitMatch = clean.match(
+        /UNIT:\s*(.*?)(?=\s*(INFO:|STA:|DATE:|$))/i
+      );
+      const commMatch = clean.match(/INFO:\s*(.*?)(?=\s*DATE:|$)/i);
 
-    // Regex Mapping
-    const callRawMatch = clean.match(
-      /CALL:\s*\S+\s*-\s*(.*?)(?=\s*(ADDR:|UNIT:|$))/i
-    );
-    const boxMatch = clean.match(/BOX:\s*([\d-]+)/i);
-    const addrMatch = clean.match(
-      /ADDR:\s*(.*?)(?=\s*(UNIT:|INFO:|DATE:|STA:|$))/i
-    );
-    const idMatch = clean.match(/ID:\s*([A-Z0-9-]+)/i);
-    const unitMatch = clean.match(/UNIT:\s*(.*?)(?=\s*(INFO:|STA:|DATE:|$))/i);
-    const commMatch = clean.match(/INFO:\s*(.*?)(?=\s*DATE:|$)/i);
+      const unitList = (unitMatch ? unitMatch[1] : "")
+        .split(/[\s,]+/)
+        .filter((u) => u.length > 1 && !u.toUpperCase().startsWith("STA"));
 
-    const unitList = (unitMatch ? unitMatch[1] : "")
-      .split(/[\s,]+/)
-      .filter((u) => u.length > 1 && !u.toUpperCase().startsWith("STA"));
+      const initialUnits = await Promise.all(
+        unitList.map(async (u) => {
+          let lookupId = u.toUpperCase().replace(/\s+/g, "");
+          const isGhost = lookupId.startsWith("G") && lookupId.length > 2;
+          if (isGhost) lookupId = lookupId.substring(1);
 
-    const initialUnits = await Promise.all(
-      unitList.map((u) => {
-        const isGhost = u.toUpperCase().startsWith("G") && u.length > 2;
-        return createUnitInstance(u, isGhost);
-      })
-    );
+          const { data: appData } = await supabase
+            .from("apparatus")
+            .select("*")
+            .eq("id", lookupId)
+            .maybeSingle();
+          const { data: rosterData } = await supabase
+            .from("rosters")
+            .select("*")
+            .eq("unit_id", lookupId)
+            .maybeSingle();
 
-    const incidentData: Incident = {
-      id: idMatch ? idMatch[1] : `INC-${Date.now()}`,
-      // STRIP LEADING ZERO FROM BOX
-      box: boxMatch ? boxMatch[1].replace(/^0+/, "") : "---",
-      callType: callRawMatch ? callRawMatch[1].trim() : "UNKNOWN",
-      address: addrMatch ? addrMatch[1].trim() : "Unknown Address",
-      date: "",
-      time: "",
-      narrative: commMatch ? commMatch[1].trim() : "No comments.",
-      active: true,
-    };
+          // LOG MISSING UNIT TO DB
+          if (!appData && !isGhost) {
+            supabase
+              .from("missing_apparatus")
+              .upsert(
+                {
+                  id: lookupId,
+                  last_incident_id: idMatch ? idMatch[1] : "UNKNOWN",
+                  suggested_type: lookupId.startsWith("E")
+                    ? "ENGINE"
+                    : lookupId.startsWith("A") || lookupId.startsWith("M")
+                    ? "MEDIC"
+                    : "OTHER",
+                },
+                { onConflict: "id" }
+              )
+              .then();
+          }
 
-    setUnits(initialUnits);
-    setIncident(incidentData);
-    setView("dispatch");
+          let tacticalType = appData?.type || "OTHER";
+          if (tacticalType === "OTHER") {
+            if (lookupId.startsWith("E")) tacticalType = "ENGINE";
+            else if (lookupId.startsWith("T")) tacticalType = "TRUCK";
+            else if (lookupId.startsWith("A") || lookupId.startsWith("M"))
+              tacticalType = "MEDIC";
+          }
 
-    await supabase.from("incidents").insert([
-      {
-        id: incidentData.id,
+          return {
+            id: lookupId,
+            displayId: lookupId,
+            status: "dispatched",
+            type: tacticalType,
+            assignment: "STAGING",
+            isGhosted: isGhost,
+            members: (
+              appData?.roles || ["Officer", "Driver", "Nozzle", "Backup"]
+            ).map((role: string) => {
+              const saved = rosterData?.members?.find(
+                (m: any) => m.role === role
+              );
+              return {
+                role,
+                name: saved?.name || `${lookupId} ${role}`,
+                assignment: "Unassigned",
+              };
+            }),
+          };
+        })
+      );
+
+      const incidentData: Incident = {
+        id: idMatch ? idMatch[1] : `INC-${Date.now()}`,
+        box: boxMatch ? boxMatch[1].replace(/^0+/, "") : "---",
+        callType: callRawMatch ? callRawMatch[1].trim() : "UNKNOWN",
+        address: addrMatch ? addrMatch[1].trim() : "Unknown Address",
+        date: "",
+        time: "",
+        narrative: commMatch ? commMatch[1].trim() : "No comments.",
         active: true,
-        state: { units: initialUnits, incident: incidentData },
-      },
-    ]);
+      };
+
+      setUnits(initialUnits);
+      setIncident(incidentData);
+      setView("dispatch");
+
+      await supabase.from("incidents").insert([
+        {
+          id: incidentData.id,
+          active: true,
+          state: { units: initialUnits, incident: incidentData },
+        },
+      ]);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const syncState = async (p: { units?: FireUnit[] }) => {
     if (!incident) return;
     const nextUnits = p.units || units;
-    setUnits(nextUnits);
+    setUnits([...nextUnits]);
     await supabase
       .from("incidents")
       .update({ state: { units: nextUnits, incident } })
@@ -205,7 +238,6 @@ export default function App() {
         fontFamily: "sans-serif",
       }}
     >
-      {/* BRANDING: BCoFD Command Board Navigation */}
       <nav
         style={{
           display: "flex",
@@ -225,23 +257,7 @@ export default function App() {
           }}
         >
           <span style={{ color: "#ef4444", fontWeight: 900, fontSize: "20px" }}>
-            BC
-          </span>
-          <span style={{ color: "#ef4444", fontWeight: 700, fontSize: "16px" }}>
-            o
-          </span>
-          <span style={{ color: "#ef4444", fontWeight: 900, fontSize: "20px" }}>
-            FD
-          </span>
-          <span
-            style={{
-              color: "#f8fafc",
-              fontWeight: 600,
-              fontSize: "16px",
-              marginLeft: "10px",
-            }}
-          >
-            Command Board
+            BCoFD
           </span>
         </div>
         <button
@@ -270,7 +286,6 @@ export default function App() {
           Roster
         </button>
       </nav>
-
       <main style={{ height: "calc(100vh - 56px)" }}>
         {view === "pre-dispatch" && (
           <PreDispatch
@@ -280,10 +295,10 @@ export default function App() {
             setView={setView}
           />
         )}
-        {incident && view === "dispatch" && (
+        {view === "dispatch" && incident && (
           <Dispatch incident={incident} units={units} syncState={syncState} />
         )}
-        {incident && view === "command" && (
+        {view === "command" && incident && (
           <CommandBoard
             incident={incident}
             units={units}
