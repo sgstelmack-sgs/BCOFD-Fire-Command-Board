@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
 
+/**
+ * PRE-DISPATCH (MONITOR) VIEW
+ * - Left: Masked CodeMessaging Iframe to hide their embedded header
+ * - Right: Tactical Board Entry and Active Incident Cards
+ */
+
 interface PreDispatchProps {
   onStart: (notes: string) => void;
   setIncident: (incident: any) => void;
@@ -17,13 +23,11 @@ export default function PreDispatch({
   const [cadNotes, setCadNotes] = useState("");
   const [ongoingCalls, setOngoingCalls] = useState<any[]>([]);
 
-  // Updated with the specific CodeMessaging Cisco Secure URL
   const dispatchWebUrl =
     "https://secure-web.cisco.com/1MzA3_rL7WXltWsSP_9VAun4qgYernnv_gLtuwwzyQUT4uBNizlFS7I8iEgoZ6PAYD0S3tjVhWvMGCiLZSa8rGJQRKphW3Euuccb6s76GCtsI8yNUlGGDr2FiPyjhYi7IJYscHbv5KJ5AAgdSykL0BFRTfe2gi431HqDZJpywv2a2C98wzUyfech3O_OqBdmFwMkjJjdIrydRqeORdYqiBaYa5GtdFbfKAGZftbruJdLQ1R-lICMhbqpJkIXT9K7DmVBxLfvG3ZnX7cxeGFE83OxzQXURM2NHdT062e1XvrQ_MhXx3ag8iJv1z-h3uGxJPqGEhALSi_sw2sil0iJh8-EPocf9XEVjcP_0Afg0qGJ2lY_A79MbddBREETReoGgCWHwU-I_UyzoxC95_FPj9_HMGo87SgiRg8Dw758xDgMQri3gghiFpYRFTqp2qofR/https%3A%2F%2Fdev.codemessaging.net%2Frc%2FDF5Z4H3Z4VP.php";
 
   useEffect(() => {
     fetchActiveIncidents();
-
     const channel = supabase
       .channel("monitor-view")
       .on(
@@ -34,7 +38,6 @@ export default function PreDispatch({
         }
       )
       .subscribe();
-
     return () => {
       supabase.removeChannel(channel);
     };
@@ -46,7 +49,6 @@ export default function PreDispatch({
       .select("*")
       .eq("active", true)
       .order("updated_at", { ascending: false });
-
     if (!error && data) setOngoingCalls(data);
   };
 
@@ -57,7 +59,6 @@ export default function PreDispatch({
         : record.state;
     setIncident(state.incident);
     setUnits(state.units);
-
     const allArrived = state.units.every((u: any) => u.status === "arrived");
     setView(allArrived ? "command" : "dispatch");
   };
@@ -67,15 +68,17 @@ export default function PreDispatch({
       style={{
         display: "grid",
         gridTemplateColumns: "1fr 450px",
-        height: "calc(100vh - 48px)",
+        height: "calc(100vh - 56px)",
         background: "#060b13",
+        overflow: "hidden",
       }}
     >
-      {/* LEFT COLUMN: THE CODE MESSAGING WEB FRAME */}
+      {/* LEFT COLUMN: LIVE DISPATCH MONITOR */}
       <section
         style={{
           borderRight: "2px solid #1f2937",
           background: "#000",
+          overflow: "hidden",
           position: "relative",
         }}
       >
@@ -85,14 +88,15 @@ export default function PreDispatch({
           allow="autoplay; fullscreen"
           style={{
             width: "100%",
-            height: "100%",
+            height: "calc(100% + 85px)", // Extra height to account for the shift
             border: "none",
             backgroundColor: "#000",
+            marginTop: "-85px", // THIS SLIDES THE IFRAME UP TO HIDE THEIR HEADER
           }}
         />
       </section>
 
-      {/* RIGHT COLUMN: TOOLS & ACTIVE CALLS */}
+      {/* RIGHT COLUMN: TOOLS & CARDS */}
       <aside
         style={{
           padding: "20px",
@@ -100,9 +104,9 @@ export default function PreDispatch({
           display: "flex",
           flexDirection: "column",
           gap: "25px",
+          borderLeft: "1px solid #1f2937",
         }}
       >
-        {/* CAD ENTRY BOX */}
         <section>
           <div
             style={{
@@ -112,7 +116,15 @@ export default function PreDispatch({
               marginBottom: "10px",
             }}
           >
-            <h3 style={{ color: "#38bdf8", fontSize: "14px", margin: 0 }}>
+            <h3
+              style={{
+                color: "#38bdf8",
+                fontSize: "12px",
+                fontWeight: "bold",
+                margin: 0,
+                letterSpacing: "1px",
+              }}
+            >
               CAD INCIDENT ENTRY
             </h3>
             <button
@@ -134,7 +146,7 @@ export default function PreDispatch({
             placeholder="Paste CAD text here..."
             style={{
               width: "100%",
-              height: "220px",
+              height: "180px",
               background: "#0f172a",
               border: "1px solid #334155",
               borderRadius: "8px",
@@ -161,7 +173,6 @@ export default function PreDispatch({
               fontWeight: "bold",
               fontSize: "16px",
               cursor: "pointer",
-              transition: "background 0.2s",
             }}
           >
             START NEW INCIDENT
@@ -172,78 +183,162 @@ export default function PreDispatch({
           style={{ border: "0", borderTop: "1px solid #1f2937", width: "100%" }}
         />
 
-        {/* ONGOING CALLS LIST */}
         <section>
           <h3
-            style={{ color: "#facc15", fontSize: "14px", marginBottom: "15px" }}
+            style={{
+              color: "#facc15",
+              fontSize: "12px",
+              fontWeight: "bold",
+              marginBottom: "15px",
+              letterSpacing: "1px",
+            }}
           >
-            ACTIVE INCIDENTS
+            ACTIVE TACTICAL BOARDS
           </h3>
           <div
-            style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+            style={{ display: "flex", flexDirection: "column", gap: "15px" }}
           >
-            {ongoingCalls.length === 0 ? (
-              <div
-                style={{
-                  color: "#475569",
-                  fontSize: "13px",
-                  textAlign: "center",
-                  padding: "20px",
-                }}
-              >
-                No active calls currently in progress.
-              </div>
-            ) : (
-              ongoingCalls.map((call) => (
+            {ongoingCalls.map((call) => {
+              const state =
+                typeof call.state === "string"
+                  ? JSON.parse(call.state)
+                  : call.state;
+              const detail = state.incident;
+              return (
                 <div
                   key={call.id}
                   onClick={() => resumeIncident(call)}
                   style={{
-                    background: "#1e293b",
-                    padding: "15px",
-                    borderRadius: "8px",
-                    borderLeft: "5px solid #ef4444",
+                    background: "#111827",
+                    padding: "18px",
+                    borderRadius: "10px",
+                    border: "1px solid #1e293b",
+                    borderLeft: "6px solid #ef4444",
                     cursor: "pointer",
-                    transition: "transform 0.1s",
+                    transition: "all 0.2s",
                   }}
                   onMouseEnter={(e) =>
-                    (e.currentTarget.style.transform = "translateX(5px)")
+                    (e.currentTarget.style.borderColor = "#38bdf8")
                   }
                   onMouseLeave={(e) =>
-                    (e.currentTarget.style.transform = "translateX(0)")
+                    (e.currentTarget.style.borderColor = "#1e293b")
                   }
                 >
-                  <div
-                    style={{
-                      fontWeight: "bold",
-                      fontSize: "15px",
-                      color: "white",
-                    }}
-                  >
-                    {call.address}
+                  <div style={{ marginBottom: "10px" }}>
+                    <small
+                      style={{
+                        color: "#64748b",
+                        fontWeight: "bold",
+                        fontSize: "9px",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      CALL TYPE
+                    </small>
+                    <div
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: 900,
+                        color: "#facc15",
+                        lineHeight: "1.1",
+                      }}
+                    >
+                      {detail.callType}
+                    </div>
                   </div>
                   <div
                     style={{
-                      fontSize: "12px",
-                      color: "#94a3b8",
-                      marginTop: "4px",
+                      display: "flex",
+                      gap: "20px",
+                      marginBottom: "12px",
                     }}
                   >
-                    BOX: {call.box} | ID: {call.id}
+                    <div style={{ minWidth: "80px" }}>
+                      <small
+                        style={{
+                          color: "#64748b",
+                          fontWeight: "bold",
+                          fontSize: "9px",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        BOX
+                      </small>
+                      <div
+                        style={{
+                          fontSize: "22px",
+                          fontWeight: 900,
+                          color: "#f8fafc",
+                        }}
+                      >
+                        {detail.box}
+                      </div>
+                    </div>
+                    <div>
+                      <small
+                        style={{
+                          color: "#64748b",
+                          fontWeight: "bold",
+                          fontSize: "9px",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        ADDRESS
+                      </small>
+                      <div
+                        style={{
+                          fontSize: "18px",
+                          fontWeight: 800,
+                          color: "#38bdf8",
+                        }}
+                      >
+                        {detail.address}
+                      </div>
+                    </div>
                   </div>
                   <div
                     style={{
-                      fontSize: "10px",
-                      color: "#38bdf8",
-                      marginTop: "8px",
-                      fontWeight: "bold",
+                      borderTop: "1px solid #1e293b",
+                      paddingTop: "10px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
                     }}
                   >
-                    RESUME INCIDENT →
+                    <div>
+                      <small
+                        style={{
+                          color: "#64748b",
+                          fontWeight: "bold",
+                          fontSize: "9px",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        Incident ID
+                      </small>
+                      <div
+                        style={{
+                          fontSize: "13px",
+                          fontWeight: 700,
+                          color: "#94a3b8",
+                        }}
+                      >
+                        {call.id}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        color: "#ef4444",
+                        fontWeight: "bold",
+                        fontSize: "11px",
+                      }}
+                    >
+                      OPEN →
+                    </div>
                   </div>
                 </div>
-              ))
-            )}
+              );
+            })}
           </div>
         </section>
       </aside>

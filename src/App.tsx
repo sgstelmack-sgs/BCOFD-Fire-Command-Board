@@ -6,28 +6,28 @@ import CommandBoard from "./components/CommandBoard";
 import Roster from "./components/Roster";
 
 /**
- * GLOBAL INTERFACES
- * Strict data structures to ensure the fireground state is consistent.
+ * CAPTAIN'S NOTES: GLOBAL INTERFACES
+ * Defines the strict structure for Units and Incidents.
  */
 export interface FireUnit {
-  id: string; // Primary key (e.g., M47)
-  displayId: string; // User-facing ID (e.g., A47)
-  status: string; // 'dispatched', 'enroute', 'arrived'
-  type: string; // Apparatus type (ENGINE, TRUCK, etc.)
-  assignment: string; // Tactical seat on Command Board
-  members: any[]; // Crew array [{role: string, name: string}]
-  isGhosted: boolean; // Notified/Standby status
+  id: string;
+  displayId: string;
+  status: string;
+  type: string;
+  assignment: string;
+  members: any[];
+  isGhosted: boolean;
 }
 
 export interface Incident {
-  id: string; // CAD Incident Number
-  box: string; // Physical Box Area
-  callType: string; // Nature of call (extracted between CALL: and ADDR:)
-  address: string; // Dispatch address
+  id: string;
+  box: string;
+  callType: string;
+  address: string;
   date: string;
   time: string;
-  narrative: string; // Cleaned dispatch comments
-  active: boolean; // Operational status
+  narrative: string;
+  active: boolean;
 }
 
 export default function App() {
@@ -36,9 +36,8 @@ export default function App() {
   const [units, setUnits] = useState<FireUnit[]>([]);
 
   /**
-   * SUPABASE REAL-TIME LISTENER
-   * Keeps multiple command tablets in sync. If one person changes a status,
-   * every other device on the fireground updates automatically.
+   * REAL-TIME SYNCHRONIZATION
+   * Connects to Supabase to ensure all tablets on the fireground stay in sync.
    */
   useEffect(() => {
     if (!incident?.id) return;
@@ -73,9 +72,7 @@ export default function App() {
 
   /**
    * UNIT FACTORY
-   * 1. Strips 'G' prefix for database lookups.
-   * 2. Checks Supabase for saved shift rosters.
-   * 3. Defaults to 'Unit + Role' names if no roster exists.
+   * Translates CAD IDs into database assets and fetches saved rosters.
    */
   const createUnitInstance = async (
     unitId: string,
@@ -84,7 +81,7 @@ export default function App() {
     let rawId = unitId.toUpperCase().replace(/\s+/g, "");
     let lookupId = rawId;
 
-    // BCoFD Notified Logic: Strip 'G' to find the actual asset in the DB
+    // Ghost Logic: Strip 'G' to find actual apparatus in database
     if (rawId.startsWith("G") && rawId.length > 2)
       lookupId = rawId.substring(1);
 
@@ -120,15 +117,18 @@ export default function App() {
   };
 
   /**
-   * CAD PARSER
-   * Extracts data from the CAD dump using non-greedy Regex patterns.
-   * Excludes 'STA' units and handles 'G' notified prefixes.
+   * CAPTAIN'S NOTES: UPDATED CAD PARSER
+   * - CallType: Skips the CAD code (e.g. SFRESD) and grabs "Main - Sub" descriptors.
+   * - Box: Automatically strips leading zeros (047-01 -> 47-01).
+   * - Narrative: Terminates exactly at the DATE: field.
    */
   const handleStartIncident = async (notes: string) => {
     const clean = notes.replace(/\n/g, " ").replace(/\s\s+/g, " ");
 
-    // Field Mapping
-    const callMatch = clean.match(/CALL:\s*(.*?)(?=\s*(ADDR:|UNIT:|$))/i);
+    // Regex Mapping
+    const callRawMatch = clean.match(
+      /CALL:\s*\S+\s*-\s*(.*?)(?=\s*(ADDR:|UNIT:|$))/i
+    );
     const boxMatch = clean.match(/BOX:\s*([\d-]+)/i);
     const addrMatch = clean.match(
       /ADDR:\s*(.*?)(?=\s*(UNIT:|INFO:|DATE:|STA:|$))/i
@@ -150,8 +150,9 @@ export default function App() {
 
     const incidentData: Incident = {
       id: idMatch ? idMatch[1] : `INC-${Date.now()}`,
-      box: boxMatch ? boxMatch[1] : "---",
-      callType: callMatch ? callMatch[1].trim() : "UNKNOWN",
+      // STRIP LEADING ZERO FROM BOX
+      box: boxMatch ? boxMatch[1].replace(/^0+/, "") : "---",
+      callType: callRawMatch ? callRawMatch[1].trim() : "UNKNOWN",
       address: addrMatch ? addrMatch[1].trim() : "Unknown Address",
       date: "",
       time: "",
@@ -162,6 +163,7 @@ export default function App() {
     setUnits(initialUnits);
     setIncident(incidentData);
     setView("dispatch");
+
     await supabase.from("incidents").insert([
       {
         id: incidentData.id,
@@ -203,6 +205,7 @@ export default function App() {
         fontFamily: "sans-serif",
       }}
     >
+      {/* BRANDING: BCoFD Command Board Navigation */}
       <nav
         style={{
           display: "flex",
@@ -232,14 +235,13 @@ export default function App() {
           </span>
           <span
             style={{
-              color: "white",
-              fontWeight: 300,
+              color: "#f8fafc",
+              fontWeight: 600,
               fontSize: "16px",
               marginLeft: "10px",
-              opacity: 0.6,
             }}
           >
-            OPS
+            Command Board
           </span>
         </div>
         <button
@@ -268,6 +270,7 @@ export default function App() {
           Roster
         </button>
       </nav>
+
       <main style={{ height: "calc(100vh - 56px)" }}>
         {view === "pre-dispatch" && (
           <PreDispatch

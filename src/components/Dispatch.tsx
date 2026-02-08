@@ -2,12 +2,6 @@ import React, { useState } from "react";
 import { supabase } from "../supabaseClient";
 import { FireUnit } from "../App";
 
-/**
- * DISPATCH SCREEN
- * Layout:
- * - Top Header: Row 1 (Call Type), Row 2 (Box, Address, Incident ID)
- * - Main: Left (Map & Narrative), Right (Unit Accountability Sidebar)
- */
 export default function Dispatch({ incident, units, syncState }: any) {
   const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
   const [editingMember, setEditingMember] = useState<{
@@ -15,7 +9,6 @@ export default function Dispatch({ incident, units, syncState }: any) {
     idx: number;
   } | null>(null);
 
-  // Grouping logic for the unit sidebar
   const activeUnits = units.filter((u: FireUnit) => !u.isGhosted);
   const ghostedUnits = units.filter((u: FireUnit) => u.isGhosted);
 
@@ -253,11 +246,11 @@ export default function Dispatch({ incident, units, syncState }: any) {
           borderRight: "2px solid #1e293b",
         }}
       >
-        {/* --- STACKED HEADER START --- */}
+        {/* TACTICAL HEADER */}
         <div
           style={{ background: "#111827", borderBottom: "4px solid #ef4444" }}
         >
-          {/* ROW 1: CALL TYPE */}
+          {/* Row 1: "Main - Sub" Call Type */}
           <div
             style={{
               padding: "15px 30px",
@@ -287,7 +280,7 @@ export default function Dispatch({ incident, units, syncState }: any) {
             </div>
           </div>
 
-          {/* ROW 2: BOX, ADDRESS, INCIDENT # */}
+          {/* Row 2: Geospatial Info */}
           <div
             style={{
               padding: "15px 30px",
@@ -351,7 +344,6 @@ export default function Dispatch({ incident, units, syncState }: any) {
             </div>
           </div>
         </div>
-        {/* --- STACKED HEADER END --- */}
 
         <div style={{ flex: 1 }}>
           <iframe
@@ -363,7 +355,6 @@ export default function Dispatch({ incident, units, syncState }: any) {
             allowFullScreen
           ></iframe>
         </div>
-
         <div
           style={{
             height: "250px",
