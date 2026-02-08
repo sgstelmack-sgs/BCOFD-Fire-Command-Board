@@ -1,106 +1,124 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
 
+interface RosterMember {
+  role: string;
+  name: string;
+  rank: string;
+}
+
+interface ApparatusRoster {
+  id: string; // e.g., "E471"
+  members: RosterMember[];
+}
+
 export default function Roster() {
-  const [battalions, setBattalions] = useState<any>({});
-  const [expandedBats, setExpandedBats] = useState<string[]>([]);
-  const [expandedStats, setExpandedStats] = useState<string[]>([]);
+  const [rosters, setRosters] = useState<ApparatusRoster[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchAndGroup = async () => {
-    // 1. Get the structure from apparatus
-    const { data: appData } = await supabase.from("apparatus").select("*");
-    // 2. Get the personnel from rosters
-    const { data: rosData } = await supabase.from("rosters").select("*");
+  useEffect(() => {
+    fetchRosters();
+  }, []);
 
-    if (appData) {
-      const grouped = appData.reduce((acc: any, unit: any) => {
-        const bat = `BATTALION: ${unit.battalion || "UNK"}`;
-        const sta = `STATION ${unit.station || "UNK"}`;
-        
-        // Find matching crew in rosters data
-        const crew = rosData?.find(r => r.id === unit.id);
-        const unitWithCrew = { ...unit, members: crew?.members || [] };
-
-        if (!acc[bat]) acc[bat] = {};
-        if (!acc[bat][sta]) acc[bat][sta] = [];
-        acc[bat][sta].push(unitWithCrew);
-        return acc;
-      }, {});
-      setBattalions(grouped);
+  const fetchRosters = async () => {
+    setLoading(true);
+    // Pulls from the 'rosters' table
+    const { data, error } = await supabase.from("rosters").select("*").order("id", { ascending: true });
+    if (error) {
+      console.error("Error fetching rosters:", error);
+    } else {
+      setRosters(data || []);
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchAndGroup(); }, []);
-
-  const isBatExpanded = (bat: string) => expandedBats.indexOf(bat) !== -1;
-  const isStaExpanded = (sta: string) => expandedStats.indexOf(sta) !== -1;
-
-  const toggleBat = (bat: string) => 
-    isBatExpanded(bat) ? setExpandedBats(expandedBats.filter(b => b !== bat)) : setExpandedBats([...expandedBats, bat]);
-  
-  const toggleSta = (sta: string) => 
-    isStaExpanded(sta) ? setExpandedStats(expandedStats.filter(s => s !== sta)) : setExpandedStats([...expandedStats, sta]);
-
-  const saveMemberChange = async (id: string, members: any) => {
-    // Always upsert to 'rosters' to ensure personnel data is saved
-    await supabase.from("rosters").upsert({ id, members });
+  const handleUpdateName = (unitId: string, role: string, newName: string) => {
+    setRosters((prev) =>
+      prev.map((r) => {
+        if (r.id !== unitId) return r;
+        return {
+          ...r,
+          members: r.members.map((m) => (m.role === role ? { ...m, name: newName } : m)),
+        };
+      })
+    );
   };
 
-  if (loading) return <div style={{ padding: 40, color: "#94a3b8" }}>Loading Regional Roster...</div>;
+  const saveRoster = async (unitId: string) => {
+    const rosterToSave = rosters.find((r) => r.id === unitId);
+    if (!rosterToSave) return;
+
+    const { error } = await supabase
+      .from("rosters")
+      .upsert({ id: unitId, members: rosterToSave.members });
+
+    if (error) {
+      alert(`Error saving ${unitId}: ` + error.message);
+    } else {
+      alert(`${unitId} Roster Updated Locally & In Database`);
+    }
+  };
+
+  if (loading) return <div style={{ padding: "40px", color: "#94a3b8" }}>Loading Department Roster...</div>;
 
   return (
-    <div style={{ padding: "30px", background: "#060b13", minHeight: "100vh", color: "white" }}>
-      <h1 style={{ color: "#8b5cf6", fontSize: "22px", borderBottom: "1px solid #1e293b", paddingBottom: "10px", marginBottom: "20px" }}>REGIONAL APPARATUS ROSTER</h1>
-      {Object.keys(battalions).sort().map(bat => {
-        const expanded = isBatExpanded(bat);
-        return (
-          <div key={bat} style={{ marginBottom: "15px", border: "1px solid #1e293b" }}>
-            <div onClick={() => toggleBat(bat)} style={{ padding: "15px", cursor: "pointer", background: "#1e293b", fontWeight: "bold", display: "flex", justifyContent: "space-between" }}>
-              <span>{bat}</span>
-              <span>{expanded ? "▲" : "▼"}</span>
+    <div style={{ padding: "30px", background: "#060b13", minHeight: "calc(100vh - 48px)" }}>
+      <header style={{ marginBottom: "30px", borderBottom: "1px solid #1f2937", paddingBottom: "15px" }}>
+        <h2 style={{ color: "#8b5cf6", margin: 0 }}>Station Roster Management</h2>
+        <p style={{ color: "#94a3b8", margin: "5px 0 0 0" }}>
+          Set the permanent daily riding list. These names will auto-populate during a CAD alert.
+        </p>
+      </header>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "25px" }}>
+        {rosters.map((unit) => (
+          <div 
+            key={unit.id} 
+            style={{ 
+              background: "#0f172a", 
+              borderRadius: "12px", 
+              border: "1px solid #1e293b", 
+              display: "flex", 
+              flexDirection: "column" 
+            }}
+          >
+            <div style={{ background: "#1e293b", padding: "15px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "20px", fontWeight: "bold", color: "white" }}>{unit.id}</span>
+              <button 
+                onClick={() => saveRoster(unit.id)}
+                style={{ background: "#8b5cf6", color: "white", border: "none", padding: "5px 12px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold", cursor: "pointer" }}
+              >
+                SAVE CHANGES
+              </button>
             </div>
-            {expanded && (
-              <div style={{ padding: "15px" }}>
-                {Object.keys(battalions[bat]).map(sta => {
-                  const sExpanded = isStaExpanded(sta);
-                  return (
-                    <div key={sta} style={{ marginBottom: "10px", border: "1px solid #334155" }}>
-                      <div onClick={() => toggleSta(sta)} style={{ background: "#020617", padding: "10px", cursor: "pointer", display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-                        <span>{sta}</span>
-                        <span>{sExpanded ? "CLOSE" : "OPEN"}</span>
-                      </div>
-                      {sExpanded && (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "12px", padding: "15px" }}>
-                          {battalions[bat][sta].map((unit: any) => (
-                            <div key={unit.id} style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
-                              <div style={{ background: unit.type === "ENGINE" ? "#450a0a" : "#064e3b", padding: "8px", fontSize: "11px", fontWeight: "bold" }}>{unit.id}</div>
-                              <div style={{ padding: "10px" }}>
-                                {(unit.members.length > 0 ? unit.members : [{role: "Officer", name: ""}, {role: "Driver", name: ""}]).map((m: any, idx: number) => (
-                                  <div key={idx} style={{ marginBottom: "8px" }}>
-                                    <div style={{ fontSize: "8px", color: "#64748b" }}>{m.role}</div>
-                                    <input defaultValue={m.name} onBlur={(e) => {
-                                      const newMems = [...unit.members];
-                                      if(!newMems[idx]) newMems[idx] = {role: m.role, name: ""};
-                                      newMems[idx].name = e.target.value;
-                                      saveMemberChange(unit.id, newMems);
-                                    }} style={{ width: "100%", background: "#020617", border: "1px solid #1e293b", color: "white", padding: "6px", fontSize: "12px" }} />
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+
+            <div style={{ padding: "15px" }}>
+              {unit.members.map((m, idx) => (
+                <div key={idx} style={{ marginBottom: "12px", borderBottom: "1px solid #1e293b", paddingBottom: "10px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                    <span style={{ fontSize: "10px", color: "#8b5cf6", fontWeight: "bold" }}>{m.role.toUpperCase()}</span>
+                    <span style={{ fontSize: "10px", color: "#475569" }}>{m.rank}</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={m.name}
+                    onChange={(e) => handleUpdateName(unit.id, m.role, e.target.value)}
+                    style={{
+                      width: "100%",
+                      background: "transparent",
+                      border: "none",
+                      color: "white",
+                      fontSize: "15px",
+                      outline: "none",
+                    }}
+                    placeholder="Vacant"
+                  />
+                </div>
+              ))}
+            </div>
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }

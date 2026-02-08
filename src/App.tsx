@@ -10,6 +10,7 @@ export interface Member {
   role: string;
   name: string;
   assignment: string;
+  rank?: string;
 }
 
 export interface FireUnit {
@@ -20,6 +21,7 @@ export interface FireUnit {
   members: Member[];
   battalion?: string;
   station?: string;
+  linked_logic: any[];
 }
 
 export interface Incident {
@@ -27,7 +29,8 @@ export interface Incident {
   box: string;
   address: string;
   active: boolean;
-  benchmarks?: { [key: string]: string };
+  notes?: string;
+  timestamp?: string;
 }
 
 export default function App() {
@@ -35,7 +38,7 @@ export default function App() {
   const [incident, setIncident] = useState<Incident | null>(null);
   const [units, setUnits] = useState<FireUnit[]>([]);
 
-  // REAL-TIME SYNC: Listen for updates from other tablets
+  // REAL-TIME SYNC
   useEffect(() => {
     if (!incident?.id) return;
     const channel = supabase
@@ -56,8 +59,7 @@ export default function App() {
           if (newState) {
             setUnits(newState.units || []);
             if (newState.incident) setIncident(newState.incident);
-            // If the incident is marked inactive by someone else, kick to monitor
-            if (newState.incident?.active === false) {
+            if (payload.new.active === false) {
               setIncident(null);
               setView("pre-dispatch");
             }
@@ -70,16 +72,9 @@ export default function App() {
     };
   }, [incident?.id]);
 
-  // --- UNIT BUILDER (Apparatus & Roster Lookup) ---
+  // --- UNIT BUILDER (Apparatus Card Logic) ---
   const createUnitInstance = async (unitId: string): Promise<FireUnit> => {
-    let rawId = unitId.toUpperCase().replace(/\s+/g, "");
-    let status = "enroute";
-    if (rawId.startsWith("G")) {
-      status = "dispatched";
-      rawId = rawId.substring(1);
-    }
-
-    const isEngine = rawId.includes("E") || rawId.includes("ENG");
+    const rawId = unitId.toUpperCase().replace(/\s+/g, "");
 
     const { data: appData } = await supabase
       .from("apparatus")
@@ -92,87 +87,107 @@ export default function App() {
       .eq("id", rawId)
       .maybeSingle();
 
+    const isTruck =
+      rawId.includes("T") ||
+      rawId.includes("Q") ||
+      rawId.includes("S") ||
+      rawId.includes("TW");
+    const defaultRoles = isTruck
+      ? ["Officer", "Driver", "Left Jump", "Right Jump"]
+      : ["Officer", "Driver", "Nozzle", "Backup"];
+
+    const dbRoles = appData?.roles || defaultRoles;
+
     return {
       id: rawId,
-      status,
-      type: isEngine ? "ENGINE" : "TRUCK",
+      status: "dispatched",
+      type: appData?.type || (isTruck ? "TRUCK" : "ENGINE"),
       assignment: "STAGING",
-      battalion: appData?.battalion || "UNK",
-      station: appData?.station || "UNK",
-      members: rosterData?.members
-        ? rosterData.members.map((m: any) => ({
-            ...m,
-            assignment: "Unassigned",
-          }))
-        : [
-            { role: "Officer", name: "", assignment: "Unassigned" },
-            { role: "Driver", name: "", assignment: "Unassigned" },
-            {
-              role: isEngine ? "Nozzle" : "Search",
-              name: "",
-              assignment: "Unassigned",
-            },
-            {
-              role: isEngine ? "Backup" : "OV",
-              name: "",
-              assignment: "Unassigned",
-            },
-          ],
+      linked_logic: appData?.linked_pairs
+        ? typeof appData.linked_pairs === "string"
+          ? JSON.parse(appData.linked_pairs)
+          : appData.linked_pairs
+        : [],
+      members: dbRoles.map((role: string) => {
+        const person = rosterData?.members?.find((m: any) => m.role === role);
+        return {
+          role,
+          // FALLBACK: Roster Name -> "E8 Officer" Default
+          name: person?.name || `${rawId} ${role}`,
+          rank: person?.rank || "",
+          assignment: "Unassigned",
+        };
+      }),
     };
   };
 
-  // --- INCIDENT LIFECYCLE ---
+  // --- CAD PARSING & INCIDENT START ---
   const handleStartIncident = async (notes: string) => {
-    const boxMatch = notes.match(/BOX:\s*([\d-]+)/i);
-    const addrMatch = notes.match(/ADDR:\s*(.*?)\sUNIT:/i);
-    const unitMatch = notes.match(/UNIT:\s*(.*?)\s(?:INFO|STA|DATE)/i);
+    const clean = notes.replace(/\n/g, " ").replace(/\s\s+/g, " ");
 
-    const incidentId = `INC-${Date.now()}`;
-    const unitList = unitMatch
-      ? unitMatch[1]
-          .trim()
-          .split(/\s+/)
-          .filter((id) => id)
-      : [];
+    const boxMatch = clean.match(/BOX:\s*([\d-]+)/i);
+    const addrMatch = clean.match(
+      /ADDR:\s*(.*?)(?=\s*(UNIT:|INFO:|DATE:|STA:|$))/i
+    );
+    const unitMatch = clean.match(
+      /UNIT:\s*(.*?)(?=\s*(INFO:|STA:|DATE:|TIME:|GPS:|$))/i
+    );
+    const infoMatch = clean.match(
+      /INFO:\s*(.*?)(?=\s*(DATE:|TIME:|GPS:|ID:|$))/i
+    );
+    const dateMatch = clean.match(/DATE:\s*([\d-]+)/i);
+    const timeMatch = clean.match(/TIME:\s*([\d:]+)/i);
+    const idMatch = clean.match(/ID:\s*([A-Z0-9-]+)/i);
+
+    const rawUnits = unitMatch ? unitMatch[1] : "";
+    const unitList = rawUnits.split(/[\s,]+/).filter((u) => u.length > 1);
     const initialUnits = await Promise.all(
       unitList.map((id) => createUnitInstance(id))
     );
 
+    const incidentId = idMatch ? idMatch[1] : `INC-${Date.now()}`;
     const initialIncident: Incident = {
       id: incidentId,
       box: boxMatch ? boxMatch[1] : "---",
-      address: addrMatch ? addrMatch[1].trim() : "Unknown",
+      address: addrMatch ? addrMatch[1].trim() : "Unknown Address",
       active: true,
+      notes: infoMatch ? infoMatch[1].trim() : "No additional comments",
+      timestamp: `${dateMatch ? dateMatch[1] : ""} ${
+        timeMatch ? timeMatch[1] : ""
+      }`.trim(),
     };
 
-    setIncident(initialIncident);
     setUnits(initialUnits);
+    setIncident(initialIncident);
     setView("dispatch");
 
-    await supabase.from("incidents").upsert([
+    // FIXED: Removed duplicate properties to resolve TS1117
+    await supabase.from("incidents").insert([
       {
         id: incidentId,
         address: initialIncident.address,
-        state: { units: initialUnits, incident: initialIncident },
+        box: initialIncident.box,
+        active: true,
+        state: {
+          units: initialUnits,
+          incident: initialIncident,
+        },
       },
     ]);
   };
 
   const handleEndIncident = async () => {
-    if (!incident?.id) return;
-    if (!window.confirm("End incident and archive?")) return;
+    if (!incident || !window.confirm("End incident?")) return;
+    const closed = { ...incident, active: false };
 
-    const closedIncident = { ...incident, active: false };
-
-    // Update DB to notify all other tablets
     await supabase
       .from("incidents")
       .update({
-        state: { units: [], incident: closedIncident },
+        active: false,
+        state: { units: [], incident: closed },
       })
       .eq("id", incident.id);
 
-    // Reset Local State
     setIncident(null);
     setUnits([]);
     setView("pre-dispatch");
@@ -182,17 +197,13 @@ export default function App() {
     units?: FireUnit[];
     incident?: Incident | null;
   }) => {
-    if (!incident?.id) return;
+    if (!incident) return;
     const nextUnits = payload.units || units;
-    const nextIncident = payload.incident || incident;
-
     setUnits(nextUnits);
-    setIncident(nextIncident);
-
     await supabase
       .from("incidents")
       .update({
-        state: { units: nextUnits, incident: nextIncident },
+        state: { units: nextUnits, incident },
       })
       .eq("id", incident.id);
   };
@@ -277,18 +288,12 @@ export default function App() {
           />
         )}
         {incident && view === "dispatch" && (
-          <Dispatch
-            incident={incident}
-            units={units}
-            setUnits={setUnits}
-            syncState={syncState}
-          />
+          <Dispatch incident={incident} units={units} syncState={syncState} />
         )}
         {incident && view === "command" && (
           <CommandBoard
             incident={incident}
             units={units}
-            setUnits={setUnits}
             syncState={syncState}
             handleEndIncident={handleEndIncident}
           />

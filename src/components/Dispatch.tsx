@@ -1,182 +1,253 @@
-import React, { useState } from "react";
-import { FireUnit, Member } from "../App";
+import React from "react";
+import { FireUnit, Incident } from "../App";
 
 export default function Dispatch({
   incident,
   units,
-  setUnits,
   syncState,
-  createUnitInstance,
-}: any) {
-  const [expanded, setExpanded] = useState<string[]>([]);
-  const mapUrl = `https://maps.google.com/maps?q=${encodeURIComponent(
-    incident.address
-  )}&t=k&z=19&output=embed`;
+}: {
+  incident: Incident;
+  units: FireUnit[];
+  syncState: any;
+}) {
+  // Logic: Separate alerted units from ghosted units
+  const activeAlerts = units.filter((u: FireUnit) => u.status === "dispatched");
+  const ghostedAlerts = units.filter((u: FireUnit) => u.status === "ghosted");
 
-  const isExpanded = (id: string) => expanded.indexOf(id) !== -1;
-  const toggleExpand = (id: string) =>
-    isExpanded(id)
-      ? setExpanded(expanded.filter((i) => i !== id))
-      : setExpanded([...expanded, id]);
+  const renderUnitCard = (u: FireUnit, isGhosted: boolean) => (
+    <div
+      key={u.id}
+      style={{
+        background: "#0f172a",
+        borderRadius: "8px",
+        border: isGhosted ? "1px dashed #334155" : "1px solid #1e293b",
+        marginBottom: "20px",
+        opacity: isGhosted ? 0.5 : 1,
+        filter: isGhosted ? "grayscale(100%)" : "none",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          background: isGhosted ? "#1e293b" : "#2d3748",
+          padding: "10px 15px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <span style={{ fontWeight: "bold", color: "white", fontSize: "18px" }}>
+          {u.id} {isGhosted && "(GHOSTED)"}
+        </span>
+        <span
+          style={{
+            fontSize: "10px",
+            color: "#94a3b8",
+            background: "#060b13",
+            padding: "2px 6px",
+            borderRadius: "4px",
+          }}
+        >
+          {u.type}
+        </span>
+      </div>
 
-  const setStatus = (uid: string, newStatus: string) => {
-    const next = units.map((u: FireUnit) =>
-      u.id === uid ? { ...u, status: newStatus } : u
-    );
-    setUnits(next);
-    syncState({ units: next, incident });
-  };
+      <div style={{ padding: "15px" }}>
+        {u.members.map((m: any, mIdx: number) => (
+          <div key={mIdx} style={{ marginBottom: "12px" }}>
+            <label
+              style={{
+                fontSize: "10px",
+                color: "#38bdf8",
+                display: "block",
+                marginBottom: "4px",
+                fontWeight: "bold",
+              }}
+            >
+              {m.role.toUpperCase()}
+            </label>
+            <input
+              type="text"
+              value={m.name}
+              onChange={(e) => {
+                const nextUnits = units.map((unit: FireUnit) => {
+                  if (unit.id !== u.id) return unit;
+                  const nextM = [...unit.members];
+                  nextM[mIdx].name = e.target.value;
+                  return { ...unit, members: nextM };
+                });
+                syncState({ units: nextUnits });
+              }}
+              style={{
+                width: "100%",
+                background: "#060b13",
+                border: "1px solid #334155",
+                borderRadius: "4px",
+                padding: "10px",
+                color: "white",
+                fontSize: "14px",
+              }}
+            />
+          </div>
+        ))}
 
-  const getTypeIndex = (unit: FireUnit) => {
-    const sameType = units.filter(
-      (u: FireUnit) => u.type === unit.type && u.status !== "dispatched"
-    );
-    return sameType.findIndex((u: FireUnit) => u.id === unit.id) + 1;
-  };
+        <button
+          onClick={() => {
+            const nextUnits = units.map((unit: FireUnit) =>
+              unit.id === u.id ? { ...unit, status: "enroute" } : unit
+            );
+            syncState({ units: nextUnits });
+          }}
+          style={{
+            width: "100%",
+            background: isGhosted ? "#4a5568" : "#eab308",
+            color: isGhosted ? "white" : "black",
+            border: "none",
+            padding: "14px",
+            borderRadius: "6px",
+            fontWeight: "900",
+            marginTop: "10px",
+            cursor: "pointer",
+            fontSize: "14px",
+            textTransform: "uppercase",
+          }}
+        >
+          {isGhosted ? "Activate & Respond" : "Responding"}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "1fr 450px",
-        height: "calc(100vh - 45px)",
+        gridTemplateColumns: "1fr 500px",
+        height: "calc(100vh - 48px)",
         background: "#060b13",
       }}
     >
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        <div
-          style={{
-            background: "#0f172a",
-            padding: "15px",
-            borderBottom: "1px solid #1e293b",
-          }}
-        >
-          <div style={{ color: "#f97316", fontWeight: "bold" }}>
-            BOX {incident.box}
-          </div>
-          <div style={{ fontSize: "20px", fontWeight: "bold" }}>
-            {incident.address}
-          </div>
-        </div>
-        <div style={{ flex: 1 }}>
-          <iframe
-            width="100%"
-            height="100%"
-            frameBorder="0"
-            src={mapUrl}
-            style={{ filter: "brightness(0.7)" }}
-          />
-        </div>
-      </div>
-
-      <aside
-        style={{ background: "#020617", padding: "10px", overflowY: "auto" }}
+      {/* LEFT: MAP & DETAILS */}
+      <section
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          borderRight: "2px solid #1f2937",
+          overflow: "hidden",
+        }}
       >
         <div
           style={{
-            fontSize: "11px",
-            color: "#facc15",
-            fontWeight: "bold",
-            marginBottom: "10px",
+            padding: "20px",
+            background: "#0f172a",
+            borderBottom: "1px solid #1f2937",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
           }}
         >
-          UNITS EN ROUTE
-        </div>
-        {units
-          .filter((u: FireUnit) => u.status === "enroute")
-          .map((u: FireUnit) => (
+          <div>
             <div
-              key={u.id}
+              style={{ fontSize: "12px", color: "#38bdf8", fontWeight: "bold" }}
+            >
+              BOX {incident.box} | {incident.timestamp}
+            </div>
+            <h1 style={{ margin: "5px 0", color: "white", fontSize: "24px" }}>
+              {incident.address}
+            </h1>
+          </div>
+          <div
+            style={{ textAlign: "right", color: "#94a3b8", fontSize: "11px" }}
+          >
+            ID: {incident.id}
+          </div>
+        </div>
+
+        {/* SATELLITE MAP - ZOOM 19 */}
+        <div style={{ flex: 2, background: "#000" }}>
+          <iframe
+            title="Satellite Map"
+            width="100%"
+            height="100%"
+            style={{ border: 0 }}
+            src={`https://maps.google.com/maps?q=${encodeURIComponent(
+              incident.address
+            )}&t=k&z=19&output=embed`}
+            allowFullScreen
+          />
+        </div>
+
+        {/* INFO / COMMENTS BOX */}
+        <div
+          style={{
+            flex: 1,
+            padding: "20px",
+            background: "#0b121f",
+            borderTop: "2px solid #1f2937",
+            overflowY: "auto",
+          }}
+        >
+          <h3
+            style={{
+              color: "#facc15",
+              fontSize: "11px",
+              marginBottom: "8px",
+              textTransform: "uppercase",
+            }}
+          >
+            INFO / COMMENTS
+          </h3>
+          <div
+            style={{
+              color: "#f8fafc",
+              fontSize: "16px",
+              fontWeight: "500",
+              fontFamily: "monospace",
+              backgroundColor: "#1e293b",
+              padding: "15px",
+              borderRadius: "6px",
+              border: "1px solid #334155",
+            }}
+          >
+            {incident.notes}
+          </div>
+        </div>
+      </section>
+
+      {/* RIGHT: UNIT CARDS */}
+      <aside
+        style={{ padding: "20px", overflowY: "auto", background: "#060b13" }}
+      >
+        <h3
+          style={{
+            color: "#38bdf8",
+            fontSize: "12px",
+            marginBottom: "20px",
+            borderBottom: "1px solid #1e293b",
+            paddingBottom: "10px",
+          }}
+        >
+          PRIMARY RESPONSE
+        </h3>
+        {activeAlerts.map((u: FireUnit) => renderUnitCard(u, false))}
+
+        {ghostedAlerts.length > 0 && (
+          <>
+            <h3
               style={{
-                background: "#111827",
-                marginBottom: "8px",
-                border: "1px solid #1e293b",
+                color: "#64748b",
+                fontSize: "12px",
+                marginTop: "30px",
+                marginBottom: "15px",
+                borderTop: "1px solid #1e293b",
+                paddingTop: "20px",
               }}
             >
-              <div
-                onClick={() => toggleExpand(u.id)}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  padding: "10px",
-                  cursor: "pointer",
-                  alignItems: "center",
-                }}
-              >
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: "10px" }}
-                >
-                  <span
-                    style={{
-                      background: u.type === "ENGINE" ? "#ef4444" : "#22c55e",
-                      color: "white",
-                      borderRadius: "50%",
-                      width: "20px",
-                      height: "20px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "10px",
-                    }}
-                  >
-                    {getTypeIndex(u)}
-                  </span>
-                  <div>
-                    <div style={{ fontWeight: "bold", color: "white" }}>
-                      {u.id}
-                    </div>
-                    {u.station && (
-                      <div style={{ fontSize: "9px", color: "#64748b" }}>
-                        STA {u.station} | BAT {u.battalion}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setStatus(u.id, "arrived");
-                  }}
-                  style={{
-                    background: "#22c55e",
-                    color: "black",
-                    border: "none",
-                    padding: "4px 8px",
-                    fontWeight: "bold",
-                    fontSize: "10px",
-                  }}
-                >
-                  ARRIVE
-                </button>
-              </div>
-              {isExpanded(u.id) && (
-                <div
-                  style={{
-                    padding: "10px",
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "5px",
-                  }}
-                >
-                  {u.members.map((m, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        background: "#060b13",
-                        padding: "5px",
-                        border: "1px solid #334155",
-                      }}
-                    >
-                      <div style={{ fontSize: "8px", color: "#64748b" }}>
-                        {m.role}
-                      </div>
-                      <div style={{ fontSize: "11px" }}>{m.name || "---"}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+              GHOSTED / INACTIVE
+            </h3>
+            {ghostedAlerts.map((u: FireUnit) => renderUnitCard(u, true))}
+          </>
+        )}
       </aside>
     </div>
   );
