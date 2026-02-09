@@ -39,6 +39,23 @@ export default function CommandBoard({ units, syncState }: any) {
     return [...divs].sort((a, b) => getRank(a.name) - getRank(b.name));
   };
 
+  const sortTasks = (tasks: any[]) => {
+    const order: Record<string, number> = {
+      "Fire Attack": 1,
+      Search: 2,
+      Ventilation: 3,
+      "Water Supply": 4,
+      Utilities: 5,
+      RIT: 6,
+    };
+    return [...tasks].sort((a, b) => {
+      const rankA = order[a.base] || 99;
+      const rankB = order[b.base] || 99;
+      if (rankA !== rankB) return rankA - rankB;
+      return a.id.localeCompare(b.id, undefined, { numeric: true });
+    });
+  };
+
   const [activeDivisions, setActiveDivisions] = useState(
     sortDivisions([
       { id: "group-roof", name: "Roof Group", side: "left" },
@@ -53,14 +70,16 @@ export default function CommandBoard({ units, syncState }: any) {
     ])
   );
 
-  const [allTasks, setAllTasks] = useState([
-    { id: "fa-1", name: "Fire Attack 1", base: "Fire Attack" },
-    { id: "sr-1", name: "Search 1", base: "Search" },
-    { id: "vent-1", name: "Ventilation 1", base: "Ventilation" },
-    { id: "ws-1", name: "Water Supply 1", base: "Water Supply" },
-    { id: "util-1", name: "Utilities 1", base: "Utilities" },
-    { id: "rit-1", name: "RIT Task 1", base: "RIT" },
-  ]);
+  const [allTasks, setAllTasks] = useState(
+    sortTasks([
+      { id: "fa-1", name: "Fire Attack 1", base: "Fire Attack" },
+      { id: "sr-1", name: "Search 1", base: "Search" },
+      { id: "vent-1", name: "Ventilation 1", base: "Ventilation" },
+      { id: "ws-1", name: "Water Supply 1", base: "Water Supply" },
+      { id: "util-1", name: "Utilities 1", base: "Utilities" },
+      { id: "rit-1", name: "RIT Task 1", base: "RIT" },
+    ])
+  );
 
   // --- 2. LOGIC HANDLERS ---
   const isSupervisor = (
@@ -138,22 +157,28 @@ export default function CommandBoard({ units, syncState }: any) {
       );
   };
 
+  // RESTORED: Tethering Engine for linkedPairs
   const updatePersonnelAssignment = (
     unitId: string,
     memberIdx: number,
     newAssignment: string
   ) => {
-    const nextUnits = units.map((u: any) => {
+    const nextUnits = (units || []).map((u: any) => {
       if (u.id !== unitId) return u;
       const nextMembers = [...(u.members || [])];
+
+      // Assign the dragged member
       nextMembers[memberIdx] = {
         ...nextMembers[memberIdx],
         assignment: newAssignment,
       };
+
+      // Partner logic
       const roleNorm = normalize(nextMembers[memberIdx].role);
       const pair = u.linkedPairs?.find((p: string[]) =>
         p.some((r: string) => roleNorm.includes(normalize(r)))
       );
+
       if (pair) {
         const partnerRolePart = pair.find(
           (r: string) => !roleNorm.includes(normalize(r))
@@ -163,6 +188,8 @@ export default function CommandBoard({ units, syncState }: any) {
             partnerRolePart ? normalize(partnerRolePart) : ""
           )
         );
+
+        // Partner follows if unassigned
         if (
           pIdx !== -1 &&
           (nextMembers[pIdx].assignment === "Unassigned" ||
@@ -191,22 +218,26 @@ export default function CommandBoard({ units, syncState }: any) {
       return cleaned;
     });
 
-    // FIXED: Replace moved task in its original slot with the next version
-    const taskIndex = allTasks.findIndex((t) => t.id === taskId);
-    const task = allTasks[taskIndex];
-    if (task?.base && taskIndex !== -1) {
-      const baseTypeCount =
-        allTasks.filter((t) => t.base === task.base).length + 1;
-      const newId = `${normalize(task.base)}-${baseTypeCount}`;
+    const deployedTask = allTasks.find((t) => t.id === taskId);
+    if (deployedTask && deployedTask.base) {
+      const tasksOfSameType = allTasks.filter(
+        (t) => t.base === deployedTask.base
+      );
+      const nextNumber = tasksOfSameType.length + 1;
+      const newId = `${normalize(deployedTask.base)}-${nextNumber}`;
 
-      const updatedTasks = [...allTasks];
-      // Insert new sequential task into the exact same index as the one just deployed
-      updatedTasks[taskIndex] = {
-        id: newId,
-        name: `${task.base} ${baseTypeCount}`,
-        base: task.base,
-      };
-      setAllTasks(updatedTasks);
+      if (!allTasks.find((t) => t.id === newId)) {
+        setAllTasks((prev) =>
+          sortTasks([
+            ...prev,
+            {
+              id: newId,
+              name: `${deployedTask.base} ${nextNumber}`,
+              base: deployedTask.base,
+            },
+          ])
+        );
+      }
     }
   };
 
@@ -396,19 +427,12 @@ export default function CommandBoard({ units, syncState }: any) {
             updatePersonnelAssignment(d.unitId, d.idx, task.id);
           } else if (dT === "unit") {
             const uId = e.dataTransfer.getData("unitId");
-            syncState({
-              units: units.map((u: any) =>
-                u.id === uId
-                  ? {
-                      ...u,
-                      members: u.members.map((m: any) => ({
-                        ...m,
-                        assignment: task.id,
-                      })),
-                    }
-                  : u
-              ),
-            });
+            const unit = units.find((un: any) => un.id === uId);
+            if (unit) {
+              unit.members.forEach((_: any, i: number) =>
+                updatePersonnelAssignment(uId, i, task.id)
+              );
+            }
           }
         }}
         draggable
@@ -508,19 +532,13 @@ export default function CommandBoard({ units, syncState }: any) {
           e.stopPropagation();
           const dT = e.dataTransfer.getData("type");
           if (dT === "unit") {
-            syncState({
-              units: units.map((u: any) =>
-                u.id === e.dataTransfer.getData("unitId")
-                  ? {
-                      ...u,
-                      members: u.members.map((m: any) => ({
-                        ...m,
-                        assignment: bucket.id,
-                      })),
-                    }
-                  : u
-              ),
-            });
+            const uId = e.dataTransfer.getData("unitId");
+            const unit = units.find((un: any) => un.id === uId);
+            if (unit) {
+              unit.members.forEach((_: any, i: number) =>
+                updatePersonnelAssignment(uId, i, bucket.id)
+              );
+            }
           } else if (dT === "personnel") {
             const d = JSON.parse(e.dataTransfer.getData("data"));
             updatePersonnelAssignment(d.unitId, d.idx, bucket.id);
@@ -567,7 +585,7 @@ export default function CommandBoard({ units, syncState }: any) {
           <button
             onClick={() => {
               syncState({
-                units: units.map((u: any) => ({
+                units: (units || []).map((u: any) => ({
                   ...u,
                   members: (u.members || []).map((m: any) =>
                     m.assignment === bucket.id
@@ -653,7 +671,6 @@ export default function CommandBoard({ units, syncState }: any) {
             renderPersonnelTag(p.u, p.m, p.idx, "tactical")
           )}
         </div>
-
         <div style={{ marginTop: "4px" }}>
           {orderedTasks.map((task: any) => renderTaskCard(task, bucket.id))}
         </div>
