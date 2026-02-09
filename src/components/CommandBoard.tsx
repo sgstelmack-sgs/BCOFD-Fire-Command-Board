@@ -4,7 +4,7 @@ import { FireUnit, getUnitColor } from '../App';
 const normalize = (str: string) => str?.toLowerCase().replace(/[-\s]/g, "") || "";
 
 export default function CommandBoard({ incident, units, syncState }: any) {
-  // --- 1. RIGID BUILDING HIERARCHY ---
+  // --- 1. BUILDING HIERARCHY LOGIC ---
   const sortDivisions = (divs: any[]) => {
     const getRank = (name: string) => {
       const norm = normalize(name);
@@ -60,7 +60,42 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     divisions: ["Division 3", "Division 4", "Division Bravo", "Division Delta", "Basement 2", "Basement 3", "Roof Group", "RIT"]
   };
 
-  // --- 3. CORE LOGIC ENGINES ---
+  // --- 3. TETHERED UPDATE ENGINE ---
+  const updatePersonnelAssignment = (unitId: string, memberIdx: number, newAssignment: string) => {
+    const nextUnits = units.map((u: FireUnit) => {
+      if (u.id !== unitId) return u;
+      
+      const nextMembers = [...(u.members || [])];
+      const movedMember = nextMembers[memberIdx];
+      if (!movedMember) return u;
+
+      // Update the primary member
+      nextMembers[memberIdx] = { ...movedMember, assignment: newAssignment };
+
+      // CHECK TETHERING: Link pairs (Officer + Driver)
+      const roleNorm = normalize(movedMember.role);
+      const pair = u.linkedPairs?.find(p => p.some(r => roleNorm.includes(normalize(r))));
+      
+      if (pair) {
+        const partnerRolePart = pair.find(r => !roleNorm.includes(normalize(r)));
+        const partnerIdx = nextMembers.findIndex(m => normalize(m.role).includes(normalize(partnerRolePart || "")));
+        
+        // Only tether if partner is unassigned/staging
+        if (partnerIdx !== -1 && (nextMembers[partnerIdx].assignment === "Unassigned" || nextMembers[partnerIdx].assignment === "STAGING")) {
+          nextMembers[partnerIdx] = { ...nextMembers[partnerIdx], assignment: newAssignment };
+        }
+      }
+      return { ...u, members: nextMembers };
+    });
+    syncState({ units: nextUnits });
+  };
+
+  const assignWholeUnit = (unitId: string, newAssignment: string) => {
+    const nextUnits = units.map((u: FireUnit) => u.id === unitId ? { ...u, members: (u.members || []).map(m => ({ ...m, assignment: newAssignment })) } : u);
+    syncState({ units: nextUnits });
+  };
+
+  // --- 4. OTHER LOGIC ENGINES ---
   const getAssignmentLabel = (id: string) => {
     if (!id || id === "Unassigned" || id === "STAGING") return null;
     const task = allTasks.find(t => t.id === id);
@@ -71,6 +106,25 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     }
     const other = [...activeCommand, ...activeGeneral, ...activeBranches, ...activeDivisions].find(item => item.id === id);
     return other ? other.name : null;
+  };
+
+  const handleTaskDeployment = (taskId: string, newLocation: string) => {
+    setTaskLocations(prev => ({ ...prev, [taskId]: newLocation }));
+    if (newLocation === "") return;
+    const deployedTask = allTasks.find(t => t.id === taskId);
+    if (deployedTask?.base) {
+      const baseTasks = allTasks.filter(t => t.base === deployedTask.base);
+      const nextNum = baseTasks.length + 1;
+      const newId = `${deployedTask.base.toLowerCase().replace(/\s+/g, '-')}-${nextNum}`;
+      if (!allTasks.find(t => t.id === newId)) {
+        setAllTasks(prev => {
+          const idx = prev.findIndex(t => t.id === taskId);
+          const next = [...prev];
+          next.splice(idx + 1, 0, { id: newId, name: `${deployedTask.base} ${nextNum}`, base: deployedTask.base });
+          return next;
+        });
+      }
+    }
   };
 
   const spawnNextDivision = (currentName: string) => {
@@ -106,7 +160,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     else if (section === 'divisions') setActiveDivisions(p => p.filter(b => b.id !== id));
   };
 
-  // --- 4. RENDERERS ---
+  // --- 5. RENDERERS ---
   const renderPersonnelTag = (unit: FireUnit, member: any, idx: number, context: 'staffing' | 'tactical') => {
     const color = getUnitColor(unit.type);
     const label = getAssignmentLabel(member.assignment);
@@ -117,10 +171,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
            <span><strong style={{ color }}>{unit.displayId}</strong> {member.role} {member.name}</span>
            {context === 'staffing' && label && <span style={{ fontSize: '9px', color: '#38bdf8', fontWeight: 'bold' }}>📍 {label}</span>}
         </div>
-        {context === 'tactical' && <button onClick={() => {
-            const nextUnits = units.map((u:any) => u.id === unit.id ? {...u, members: u.members.map((m:any, i:number) => i === idx ? {...m, assignment: "Unassigned"} : m)} : u);
-            syncState({ units: nextUnits });
-        }} style={{ background: '#991b1b', color: 'white', border: 'none', borderRadius: '2px', padding: '0 4px', cursor: 'pointer', height: '16px' }}>-</button>}
+        {context === 'tactical' && <button onClick={() => updatePersonnelAssignment(unit.id, idx, "Unassigned")} style={{ background: '#991b1b', color: 'white', border: 'none', borderRadius: '2px', padding: '0 4px', cursor: 'pointer', height: '16px' }}>-</button>}
       </div>
     );
   };
@@ -137,12 +188,9 @@ export default function CommandBoard({ incident, units, syncState }: any) {
           const type = e.dataTransfer.getData("type");
           if (type === "personnel") {
             const d = JSON.parse(e.dataTransfer.getData("data"));
-            const nextUnits = units.map((u:any) => u.id === d.unitId ? {...u, members: u.members.map((m:any, i:number) => i === d.idx ? {...m, assignment: task.id} : m)} : u);
-            syncState({ units: nextUnits });
+            updatePersonnelAssignment(d.unitId, d.idx, task.id);
           } else if (type === "unit") {
-            const uId = e.dataTransfer.getData("unitId");
-            const nextUnits = units.map((u:any) => u.id === uId ? {...u, members: u.members.map((m:any) => ({...m, assignment: task.id}))} : u);
-            syncState({ units: nextUnits });
+            assignWholeUnit(e.dataTransfer.getData("unitId"), task.id);
           }
         }}
         style={{ background: '#020617', borderRadius: '8px', padding: '10px', marginBottom: '10px', border: '1px solid #1e293b', borderLeft: '4px solid #38bdf8', minHeight: '60px' }}>
@@ -187,15 +235,12 @@ export default function CommandBoard({ incident, units, syncState }: any) {
           e.preventDefault(); e.stopPropagation();
           const dT = e.dataTransfer.getData("type");
           if (dT === 'unit') {
-            const uId = e.dataTransfer.getData("unitId");
-            const nextUnits = units.map((u:any) => u.id === uId ? {...u, members: u.members.map((m:any) => ({...m, assignment: bucket.id}))} : u);
-            syncState({ units: nextUnits });
+            assignWholeUnit(e.dataTransfer.getData("unitId"), bucket.id);
           } else if (dT === 'personnel') {
             const d = JSON.parse(e.dataTransfer.getData("data"));
-            const nextUnits = units.map((u:any) => u.id === d.unitId ? {...u, members: u.members.map((m:any, i:number) => i === d.idx ? {...m, assignment: bucket.id} : m)} : u);
-            syncState({ units: nextUnits });
+            updatePersonnelAssignment(d.unitId, d.idx, bucket.id);
           } else if (dT === 'task' && sectionKey === 'divisions') {
-            setTaskLocations(p => ({...p, [e.dataTransfer.getData("taskId")]: bucket.id}));
+            handleTaskDeployment(e.dataTransfer.getData("taskId"), bucket.id);
           }
         }}
         style={{ background: bg, padding: '12px', borderRadius: '8px', border: '1px solid #475569', marginTop: '12px', minHeight: '80px', position: 'relative' }}>
@@ -209,7 +254,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
         
         {bucketPersonnel.length > 0 && (
           <div style={{ marginBottom: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.1)' }}>
-            <div style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 900 }}>SUPERVISOR / COMMAND</div>
+            <div style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 900 }}>SUPERVISOR / COMMAND Staff</div>
             {bucketPersonnel.map(p => renderPersonnelTag(p.u, p.m, p.idx, 'tactical'))}
           </div>
         )}
@@ -218,18 +263,42 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     );
   };
 
+  // --- 6. MAIN PAGE RENDER ---
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', height: '100vh', background: '#060b13', overflow: 'hidden' }}>
       <div style={{ background: '#0f172a', borderRight: '1px solid #1e293b', overflowY: 'auto', padding: '15px' }}>
         <h3 style={{ color: '#38bdf8', borderBottom: '2px solid #38bdf8', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>STAFFING</h3>
-        {[...(units || [])].sort((a,b) => {
+        {[...(units || [])]
+          .filter(u => {
+            const s = (u.status || "").toLowerCase();
+            return s.includes("en route") || s.includes("arrived");
+          })
+          .sort((a,b) => {
             const aF = (a.members || []).every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
             const bF = (b.members || []).every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
             return (aF ? 1 : 0) - (bF ? 1 : 0);
-        }).map(u => (
+          }).map(u => (
           <div key={u.id} draggable onDragStart={(e) => { e.dataTransfer.setData("type", "unit"); e.dataTransfer.setData("unitId", u.id); }}
             style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px', cursor: 'grab', opacity: (u.members || []).every((m:any) => m.assignment !== "Unassigned") ? 0.4 : 1 }}>
-            <div style={{ fontWeight: 900, color: '#f8fafc', fontSize: '12px' }}>{u.displayId}</div>
+            <div style={{ fontWeight: 900, color: '#f8fafc', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{u.displayId}</span>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const s = (u.status || "").toLowerCase();
+                    let nextStatus = "Arrived"; 
+                    if (s.includes("arrived")) nextStatus = "Available"; // Clear rig from board
+                    const nextUnits = units.map((unit: any) => unit.id === u.id ? { ...unit, status: nextStatus } : unit);
+                    syncState({ units: nextUnits });
+                  }}
+                  style={{ 
+                    fontSize: '9px', padding: '2px 6px', borderRadius: '4px', border: 'none', cursor: 'pointer',
+                    background: u.status?.toLowerCase().includes('arrived') ? '#991b1b' : '#854d0e', color: 'white'
+                  }}
+                >
+                  {u.status?.toLowerCase().includes('arrived') ? 'CLEAR' : 'MARK ARRIVED'}
+                </button>
+            </div>
             {(u.members || []).map((m: any, idx: number) => renderPersonnelTag(u, m, idx, 'staffing'))}
           </div>
         ))}
@@ -246,7 +315,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
         <h3 style={{ color: '#facc15', borderBottom: '2px solid #facc15', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>AVAILABLE TASKS</h3>
         <div onDragOver={e => e.preventDefault()} onDrop={e => {
             const tId = e.dataTransfer.getData("taskId");
-            if (tId) setTaskLocations(p => { const n={...p}; delete n[tId]; return n; });
+            if (tId) handleTaskDeployment(tId, "");
         }} style={{ minHeight: '100%' }}>
           {allTasks.filter(t => !taskLocations[t.id]).map(renderTaskCard)}
         </div>
