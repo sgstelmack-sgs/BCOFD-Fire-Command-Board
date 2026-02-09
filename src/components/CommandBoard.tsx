@@ -4,7 +4,7 @@ import { FireUnit, getUnitColor } from '../App';
 const normalize = (str: string) => str?.toLowerCase().replace(/[-\s]/g, "") || "";
 
 export default function CommandBoard({ incident, units, syncState }: any) {
-  // --- 1. BUILDING HIERARCHY LOGIC ---
+  // --- 1. RIGID BUILDING HIERARCHY ---
   const sortDivisions = (divs: any[]) => {
     const getRank = (name: string) => {
       const norm = normalize(name);
@@ -218,7 +218,6 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     );
   };
 
-  // --- 5. MAIN PAGE RENDER ---
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', height: '100vh', background: '#060b13', overflow: 'hidden' }}>
       <div style={{ background: '#0f172a', borderRight: '1px solid #1e293b', overflowY: 'auto', padding: '15px' }}>
@@ -229,7 +228,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
             return (aF ? 1 : 0) - (bF ? 1 : 0);
         }).map(u => (
           <div key={u.id} draggable onDragStart={(e) => { e.dataTransfer.setData("type", "unit"); e.dataTransfer.setData("unitId", u.id); }}
-            style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px', opacity: (u.members || []).every((m:any) => m.assignment !== "Unassigned") ? 0.4 : 1 }}>
+            style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px', cursor: 'grab', opacity: (u.members || []).every((m:any) => m.assignment !== "Unassigned") ? 0.4 : 1 }}>
             <div style={{ fontWeight: 900, color: '#f8fafc', fontSize: '12px' }}>{u.displayId}</div>
             {(u.members || []).map((m: any, idx: number) => renderPersonnelTag(u, m, idx, 'staffing'))}
           </div>
