@@ -4,6 +4,7 @@ import { FireUnit, getUnitColor } from '../App';
 const normalize = (str: string) => str?.toLowerCase().replace(/[-\s]/g, "") || "";
 
 export default function CommandBoard({ incident, units, syncState }: any) {
+  // --- 1. STATE & TABS ---
   const [taskLocations, setTaskLocations] = useState<Record<string, string>>({}); 
   const [activeTab, setActiveTab] = useState<'tactical' | 'strategic'>('tactical');
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
@@ -12,7 +13,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
   const [activeGeneral, setActiveGeneral] = useState([{ id: 'ops-section', name: 'Operations Section' }]);
   const [activeBranches, setActiveBranches] = useState<any[]>([]);
 
-  // --- 1. HIERARCHY ENGINE ---
+  // --- 2. HIERARCHY ENGINE (SORTING) ---
   const sortDivisions = (divs: any[]) => {
     const getRank = (name: string) => {
       const norm = normalize(name);
@@ -52,15 +53,16 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     { id: 'rit-1', name: 'RIT Task 1', base: 'RIT' },
   ]);
 
-  // --- 2. THE RIGID FILTER ENGINE (Fixed EMS & Ghosting) ---
+  // --- 3. UPDATED FILTER ENGINE (Fixing EMS, Tow, & Ghosting) ---
   const filteredUnits = (units || []).filter(u => {
     const s = normalize(u.status || "");
     const t = normalize(u.type || "");
     const id = (u.displayId || "").toUpperCase();
     
-    // GHOSTING PROTECTION: Unit must have an active incident status
-    const isOnCall = s.includes("route") || s.includes("arrive") || s.includes("scene") || s.includes("dispatch");
-    if (!isOnCall) return false;
+    // GHOSTING PROTECTION: Unit must be actively En Route or Arrived
+    const isEnRoute = s.includes("route") || s.includes("dispatch");
+    const isArrived = s.includes("arrive") || s.includes("scene");
+    if (!isEnRoute && !isArrived) return false;
     
     if (activeFilters.length === 0) return true;
 
@@ -70,11 +72,12 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     let matchesType = typeFilters.length === 0;
     if (typeFilters.length > 0) {
       matchesType = typeFilters.some(f => {
+        // Staff: Any Chief or Safe6
         if (f === "Staff") return t.includes("chief") || id.includes("SAFE6");
-        // Fixed EMS logic: "M" prefix for Medics/Ambulances
+        // EMS: M-prefix (Medic), EMSDO, or Medic type
         if (f === "EMS") return id.startsWith("M") || id.includes("EMSDO") || id.includes("MEDIC") || t.includes("ems");
         if (f === "Engine") return t.includes("engine") || id.startsWith("E");
-        // Fixed Truck/Tow logic: TOW323 specifically mapped here
+        // Truck/Tow: Any Ladder, Truck, or TOW unit
         if (f === "Truck") return t.includes("truck") || t.includes("tow") || t.includes("ladder") || id.startsWith("T") || id.startsWith("L");
         if (f === "Squad") return t.includes("squad") || t.includes("rescue") || id.startsWith("SQ") || id.startsWith("R");
         if (f === "Other") {
@@ -82,7 +85,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
                              t.includes("truck") || t.includes("tow") || t.includes("ladder") || id.startsWith("T") || id.startsWith("L") ||
                              t.includes("squad") || t.includes("rescue") || id.startsWith("SQ") || id.startsWith("R") ||
                              t.includes("chief") || id.includes("SAFE6") || 
-                             id.startsWith("M") || id.includes("EMSDO") || id.includes("MEDIC");
+                             id.startsWith("M") || id.includes("EMSDO") || id.includes("MEDIC") || t.includes("ems");
           return !isStandard;
         }
         return false;
@@ -91,13 +94,17 @@ export default function CommandBoard({ incident, units, syncState }: any) {
 
     let matchesStatus = statusFilters.length === 0;
     if (statusFilters.length > 0) {
-      matchesStatus = statusFilters.some(f => s.includes(normalize(f)));
+      matchesStatus = statusFilters.some(f => {
+        if (f === "Arrived") return isArrived;
+        if (f === "En Route") return isEnRoute;
+        return false;
+      });
     }
 
     return matchesType && matchesStatus;
   });
 
-  // --- 3. DYNAMIC SPAWNING & RENAMING ---
+  // --- 4. SPAWNING & RENAMING ---
   const spawnNextDivision = (currentName: string, side: string) => {
     const norm = normalize(currentName);
     let nextName = "";
@@ -105,16 +112,19 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     const baseMatch = norm.match(/basement(\d+)/);
 
     if (floorMatch) nextName = `Division ${parseInt(floorMatch[1]) + 1}`;
-    else if (norm === "division1" || norm === "floor1") nextName = "Division 2";
+    else if (norm === "division1") nextName = "Division 2";
     else if (baseMatch) nextName = `Basement ${parseInt(baseMatch[1]) + 1}`;
     else if (norm === "basement") nextName = "Basement 2";
     else if (norm.includes("alpha")) nextName = "Division Bravo";
     else if (norm.includes("charlie")) nextName = "Division Delta";
     
     if (!nextName) nextName = prompt("New Division/Group Name:") || "";
+    
     if (activeDivisions.some(d => normalize(d.name) === normalize(nextName))) {
-        nextName = prompt("Name exists. Custom Name:", nextName) || "";
+        alert(`${nextName} already exists.`);
+        return;
     }
+
     if (nextName) setActiveDivisions(prev => sortDivisions([...prev, { id: `id-${Date.now()}`, name: nextName, side }]));
   };
 
@@ -125,20 +135,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     else setAllTasks(prev => prev.map(t => t.id === id ? { ...t, name: newName } : t));
   };
 
-  const handleTaskDeployment = (taskId: string, newLocation: string) => {
-    setTaskLocations(prev => ({ ...prev, [taskId]: newLocation }));
-    if (!newLocation) return;
-    const task = allTasks.find(t => t.id === taskId);
-    if (task?.base) {
-      const count = allTasks.filter(t => t.base === task.base).length + 1;
-      const newId = `${normalize(task.base)}-${count}`;
-      if (!allTasks.find(t => t.id === newId)) {
-        setAllTasks(prev => [...prev, { id: newId, name: `${task.base} ${count}`, base: task.base }]);
-      }
-    }
-  };
-
-  // --- 4. RENDERERS ---
+  // --- 5. RENDERERS ---
   const renderPersonnelTag = (unit: FireUnit, member: any, idx: number, context: 'staffing' | 'tactical') => {
     const color = getUnitColor(unit.type);
     return (
@@ -180,7 +177,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
           const dT = e.dataTransfer.getData("type");
           if (dT === 'unit') syncState({ units: units.map((u_b:any) => u_b.id === e.dataTransfer.getData("unitId") ? {...u_b, members: u_b.members.map((m:any) => ({...m, assignment: bucket.id}))} : u_b) });
           else if (dT === 'personnel') { const d = JSON.parse(e.dataTransfer.getData("data")); syncState({ units: units.map((un_b:any) => un_b.id === d.unitId ? {...un_b, members: un_b.members.map((m:any, i:number) => i === d.idx ? {...m, assignment: bucket.id} : m)} : un_b) }); }
-          else if (dT === 'task') handleTaskDeployment(e.dataTransfer.getData("taskId"), bucket.id);
+          else if (dT === 'task') setTaskLocations(prev => ({...prev, [e.dataTransfer.getData("taskId")]: bucket.id}));
         }}
         style={{ background: sectionKey === 'divisions' ? '#1e293b' : '#0f172a', padding: '8px', borderRadius: '4px', border: '1px solid #334155', marginBottom: '8px', minHeight: '60px', position: 'relative' }}>
         
