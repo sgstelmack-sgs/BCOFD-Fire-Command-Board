@@ -4,7 +4,14 @@ import { FireUnit, getUnitColor } from '../App';
 const normalize = (str: string) => str?.toLowerCase().replace(/[-\s]/g, "") || "";
 
 export default function CommandBoard({ incident, units, syncState }: any) {
-  // --- 1. BUILDING HIERARCHY LOGIC ---
+  // --- 1. STATE & TABS ---
+  const [taskLocations, setTaskLocations] = useState<Record<string, string>>({}); 
+  const [activeTab, setActiveTab] = useState<'tactical' | 'strategic'>('tactical');
+  
+  const [activeCommand, setActiveCommand] = useState([{ id: 'ic', name: 'Incident Command' }, { id: 'safety', name: 'Safety Officer' }]);
+  const [activeGeneral, setActiveGeneral] = useState([{ id: 'ops-section', name: 'Operations Section' }]);
+  const [activeBranches, setActiveBranches] = useState<any[]>([]);
+  
   const sortDivisions = (divs: any[]) => {
     const getRank = (name: string) => {
       const norm = normalize(name);
@@ -28,11 +35,6 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     return [...divs].sort((a, b) => getRank(a.name) - getRank(b.name));
   };
 
-  // --- 2. STATE ---
-  const [taskLocations, setTaskLocations] = useState<Record<string, string>>({}); 
-  const [activeCommand, setActiveCommand] = useState([{ id: 'ic', name: 'Incident Command' }, { id: 'safety', name: 'Safety Officer' }]);
-  const [activeGeneral, setActiveGeneral] = useState([{ id: 'ops-section', name: 'Operations Section' }]);
-  const [activeBranches, setActiveBranches] = useState<any[]>([]);
   const [activeDivisions, setActiveDivisions] = useState(sortDivisions([
     { id: 'group-roof', name: 'Roof Group' },
     { id: 'div-2', name: 'Division 2' },
@@ -60,27 +62,19 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     divisions: ["Division 3", "Division 4", "Division Bravo", "Division Delta", "Basement 2", "Basement 3", "Roof Group", "RIT"]
   };
 
-  // --- 3. TETHERED UPDATE ENGINE ---
+  // --- 2. TETHERED UPDATE ENGINE ---
   const updatePersonnelAssignment = (unitId: string, memberIdx: number, newAssignment: string) => {
     const nextUnits = units.map((u: FireUnit) => {
       if (u.id !== unitId) return u;
-      
       const nextMembers = [...(u.members || [])];
       const movedMember = nextMembers[memberIdx];
       if (!movedMember) return u;
-
-      // Update the primary member
       nextMembers[memberIdx] = { ...movedMember, assignment: newAssignment };
-
-      // CHECK TETHERING: Link pairs (Officer + Driver)
       const roleNorm = normalize(movedMember.role);
       const pair = u.linkedPairs?.find(p => p.some(r => roleNorm.includes(normalize(r))));
-      
       if (pair) {
         const partnerRolePart = pair.find(r => !roleNorm.includes(normalize(r)));
         const partnerIdx = nextMembers.findIndex(m => normalize(m.role).includes(normalize(partnerRolePart || "")));
-        
-        // Only tether if partner is unassigned/staging
         if (partnerIdx !== -1 && (nextMembers[partnerIdx].assignment === "Unassigned" || nextMembers[partnerIdx].assignment === "STAGING")) {
           nextMembers[partnerIdx] = { ...nextMembers[partnerIdx], assignment: newAssignment };
         }
@@ -95,7 +89,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     syncState({ units: nextUnits });
   };
 
-  // --- 4. OTHER LOGIC ENGINES ---
+  // --- 3. CORE LOGIC ---
   const getAssignmentLabel = (id: string) => {
     if (!id || id === "Unassigned" || id === "STAGING") return null;
     const task = allTasks.find(t => t.id === id);
@@ -160,7 +154,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     else if (section === 'divisions') setActiveDivisions(p => p.filter(b => b.id !== id));
   };
 
-  // --- 5. RENDERERS ---
+  // --- 4. RENDERERS ---
   const renderPersonnelTag = (unit: FireUnit, member: any, idx: number, context: 'staffing' | 'tactical') => {
     const color = getUnitColor(unit.type);
     const label = getAssignmentLabel(member.assignment);
@@ -177,10 +171,7 @@ export default function CommandBoard({ incident, units, syncState }: any) {
   };
 
   const renderTaskCard = (task: any) => {
-    const assignedPersonnel = (units || []).flatMap((u: FireUnit) => 
-      (u.members || []).map((m, idx) => ({ u, m, idx }))
-    ).filter(item => item.m.assignment === task.id);
-
+    const assignedPersonnel = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({ u, m, idx }))).filter(item => item.m.assignment === task.id);
     return (
       <div key={task.id} draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "task"); e.dataTransfer.setData("taskId", task.id); }} onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
@@ -223,20 +214,15 @@ export default function CommandBoard({ incident, units, syncState }: any) {
   };
 
   const renderBucket = (bucket: any, sectionKey: string) => {
-    const bucketPersonnel = (units || []).flatMap((u: FireUnit) => 
-      (u.members || []).map((m, idx) => ({ u, m, idx }))
-    ).filter(item => item.m.assignment === bucket.id);
-
+    const bucketPersonnel = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({ u, m, idx }))).filter(item => item.m.assignment === bucket.id);
     const bg = sectionKey === 'divisions' ? '#334155' : sectionKey === 'branches' ? '#1e293b' : '#0f172a';
-
     return (
       <div key={bucket.id} onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault(); e.stopPropagation();
           const dT = e.dataTransfer.getData("type");
-          if (dT === 'unit') {
-            assignWholeUnit(e.dataTransfer.getData("unitId"), bucket.id);
-          } else if (dT === 'personnel') {
+          if (dT === 'unit') assignWholeUnit(e.dataTransfer.getData("unitId"), bucket.id);
+          else if (dT === 'personnel') {
             const d = JSON.parse(e.dataTransfer.getData("data"));
             updatePersonnelAssignment(d.unitId, d.idx, bucket.id);
           } else if (dT === 'task' && sectionKey === 'divisions') {
@@ -244,14 +230,11 @@ export default function CommandBoard({ incident, units, syncState }: any) {
           }
         }}
         style={{ background: bg, padding: '12px', borderRadius: '8px', border: '1px solid #475569', marginTop: '12px', minHeight: '80px', position: 'relative' }}>
-        
         <div style={{ position: 'absolute', right: '8px', top: '8px', display: 'flex', gap: '5px' }}>
             {sectionKey === 'divisions' && <button onClick={() => spawnNextDivision(bucket.name)} style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', cursor: 'pointer', fontWeight: 'bold' }}>+</button>}
             <button onClick={() => removeBucket(bucket.id, sectionKey)} style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', cursor: 'pointer' }}>✕</button>
         </div>
-
         <div style={{ color: '#f1f5f9', fontSize: '11px', fontWeight: 900, marginBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>{bucket.name.toUpperCase()}</div>
-        
         {bucketPersonnel.length > 0 && (
           <div style={{ marginBottom: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.1)' }}>
             <div style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 900 }}>SUPERVISOR / COMMAND Staff</div>
@@ -263,9 +246,10 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     );
   };
 
-  // --- 6. MAIN PAGE RENDER ---
+  // --- 5. MAIN PAGE RENDER ---
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', height: '100vh', background: '#060b13', overflow: 'hidden' }}>
+      {/* COLUMN 1: STAFFING */}
       <div style={{ background: '#0f172a', borderRight: '1px solid #1e293b', overflowY: 'auto', padding: '15px' }}>
         <h3 style={{ color: '#38bdf8', borderBottom: '2px solid #38bdf8', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>STAFFING</h3>
         {[...(units || [])]
@@ -286,15 +270,10 @@ export default function CommandBoard({ incident, units, syncState }: any) {
                   onClick={(e) => {
                     e.stopPropagation();
                     const s = (u.status || "").toLowerCase();
-                    let nextStatus = "Arrived"; 
-                    if (s.includes("arrived")) nextStatus = "Available"; // Clear rig from board
-                    const nextUnits = units.map((unit: any) => unit.id === u.id ? { ...unit, status: nextStatus } : unit);
-                    syncState({ units: nextUnits });
+                    let nextStatus = s.includes("arrived") ? "Available" : "Arrived"; 
+                    syncState({ units: units.map((unit: any) => unit.id === u.id ? { ...unit, status: nextStatus } : unit) });
                   }}
-                  style={{ 
-                    fontSize: '9px', padding: '2px 6px', borderRadius: '4px', border: 'none', cursor: 'pointer',
-                    background: u.status?.toLowerCase().includes('arrived') ? '#991b1b' : '#854d0e', color: 'white'
-                  }}
+                  style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '4px', border: 'none', cursor: 'pointer', background: u.status?.toLowerCase().includes('arrived') ? '#991b1b' : '#854d0e', color: 'white' }}
                 >
                   {u.status?.toLowerCase().includes('arrived') ? 'CLEAR' : 'MARK ARRIVED'}
                 </button>
@@ -304,13 +283,44 @@ export default function CommandBoard({ incident, units, syncState }: any) {
         ))}
       </div>
 
-      <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '30px' }}>
-        <section>{renderHeader("COMMAND STAFF", "#ef4444", "command")}{activeCommand.map(c => renderBucket(c, "command"))}</section>
-        <section>{renderHeader("GENERAL STAFF", "#f97316", "general")}{activeGeneral.map(g => renderBucket(g, "general"))}</section>
-        <section>{renderHeader("BRANCHES", "#a855f7", "branches")}{activeBranches.map(b => renderBucket(b, "branches"))}</section>
-        <section>{renderHeader("DIVISIONS", "#10b981", "divisions")}{sortDivisions(activeDivisions).map(d => renderBucket(d, "divisions"))}</section>
+      {/* COLUMN 2: STRUCTURE (TABBED) */}
+      <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto' }}>
+        {/* ALWAYS SHOW COMMAND STAFF AT TOP */}
+        <section style={{ marginBottom: '20px' }}>
+          {renderHeader("COMMAND STAFF", "#ef4444", "command")}
+          {activeCommand.map(c => renderBucket(c, "command"))}
+        </section>
+
+        {/* TAB NAVIGATION */}
+        <div style={{ display: 'flex', background: '#1e293b', borderRadius: '8px', padding: '4px', marginBottom: '15px', border: '1px solid #334155' }}>
+          <button onClick={() => setActiveTab('tactical')} style={{ flex: 1, padding: '8px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 900, fontSize: '11px', color: 'white', background: activeTab === 'tactical' ? '#10b981' : 'transparent' }}>
+            TACTICAL (DIVISIONS)
+          </button>
+          <button onClick={() => setActiveTab('strategic')} style={{ flex: 1, padding: '8px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 900, fontSize: '11px', color: 'white', background: activeTab === 'strategic' ? '#a855f7' : 'transparent' }}>
+            STRATEGIC (GENERAL/BRANCH)
+          </button>
+        </div>
+
+        {activeTab === 'tactical' ? (
+          <section>
+            {renderHeader("DIVISIONS / GROUPS", "#10b981", "divisions")}
+            {sortDivisions(activeDivisions).map(d => renderBucket(d, "divisions"))}
+          </section>
+        ) : (
+          <>
+            <section style={{ marginBottom: '30px' }}>
+              {renderHeader("GENERAL STAFF", "#f97316", "general")}
+              {activeGeneral.map(g => renderBucket(g, "general"))}
+            </section>
+            <section>
+              {renderHeader("BRANCHES", "#a855f7", "branches")}
+              {activeBranches.map(b => renderBucket(b, "branches"))}
+            </section>
+          </>
+        )}
       </div>
 
+      {/* COLUMN 3: TASKS */}
       <div style={{ padding: '15px', overflowY: 'auto' }}>
         <h3 style={{ color: '#facc15', borderBottom: '2px solid #facc15', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>AVAILABLE TASKS</h3>
         <div onDragOver={e => e.preventDefault()} onDrop={e => {
