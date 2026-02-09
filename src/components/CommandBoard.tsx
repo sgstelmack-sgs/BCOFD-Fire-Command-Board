@@ -53,7 +53,7 @@ export default function CommandBoard({ units, syncState }: any) {
     ])
   );
 
-  const [allTasks] = useState([
+  const [allTasks, setAllTasks] = useState([
     { id: "fa-1", name: "Fire Attack 1", base: "Fire Attack" },
     { id: "sr-1", name: "Search 1", base: "Search" },
     { id: "vent-1", name: "Ventilation 1", base: "Ventilation" },
@@ -69,7 +69,6 @@ export default function CommandBoard({ units, syncState }: any) {
     assignmentId: string
   ) => {
     if (!assignmentId || assignmentId === "Unassigned") return false;
-    // Check if the assignment is actually a Division (Supervisor only exists in divisions)
     const isDivision = activeDivisions.some((d) => d.id === assignmentId);
     if (!isDivision) return false;
 
@@ -151,6 +150,30 @@ export default function CommandBoard({ units, syncState }: any) {
         ...nextMembers[memberIdx],
         assignment: newAssignment,
       };
+      const roleNorm = normalize(nextMembers[memberIdx].role);
+      const pair = u.linkedPairs?.find((p: string[]) =>
+        p.some((r: string) => roleNorm.includes(normalize(r)))
+      );
+      if (pair) {
+        const partnerRolePart = pair.find(
+          (r: string) => !roleNorm.includes(normalize(r))
+        );
+        const pIdx = nextMembers.findIndex((m) =>
+          normalize(m.role).includes(
+            partnerRolePart ? normalize(partnerRolePart) : ""
+          )
+        );
+        if (
+          pIdx !== -1 &&
+          (nextMembers[pIdx].assignment === "Unassigned" ||
+            nextMembers[pIdx].assignment === "STAGING")
+        ) {
+          nextMembers[pIdx] = {
+            ...nextMembers[pIdx],
+            assignment: newAssignment,
+          };
+        }
+      }
       return { ...u, members: nextMembers };
     });
     syncState({ units: nextUnits });
@@ -167,6 +190,24 @@ export default function CommandBoard({ units, syncState }: any) {
         cleaned[bucketId] = [...currentTasks, taskId];
       return cleaned;
     });
+
+    // FIXED: Replace moved task in its original slot with the next version
+    const taskIndex = allTasks.findIndex((t) => t.id === taskId);
+    const task = allTasks[taskIndex];
+    if (task?.base && taskIndex !== -1) {
+      const baseTypeCount =
+        allTasks.filter((t) => t.base === task.base).length + 1;
+      const newId = `${normalize(task.base)}-${baseTypeCount}`;
+
+      const updatedTasks = [...allTasks];
+      // Insert new sequential task into the exact same index as the one just deployed
+      updatedTasks[taskIndex] = {
+        id: newId,
+        name: `${task.base} ${baseTypeCount}`,
+        base: task.base,
+      };
+      setAllTasks(updatedTasks);
+    }
   };
 
   const moveTask = (
@@ -194,11 +235,9 @@ export default function CommandBoard({ units, syncState }: any) {
     const s = normalize(u.status || "");
     const id = (u.displayId || "").toUpperCase();
     const t = normalize(u.type || "");
-
     const isEnRoute = s.includes("route") || s.includes("dispatch");
     const isArrived = s.includes("arrive") || s.includes("scene");
     if (!isEnRoute && !isArrived) return false;
-
     if (activeFilters.length === 0) return true;
     const typeFilters = activeFilters.filter(
       (f) => !["Arrived", "En Route"].includes(f)
@@ -438,7 +477,6 @@ export default function CommandBoard({ units, syncState }: any) {
             </div>
           )}
         </div>
-        {/* TASK CREW: No Supervisor Role here per request */}
         {assigned.map((item: any) =>
           renderPersonnelTag(item.u, item.m, item.idx, "tactical")
         )}
@@ -457,7 +495,6 @@ export default function CommandBoard({ units, syncState }: any) {
       .map((id) => allTasks.find((t) => t.id === id))
       .filter(Boolean);
 
-    // ONLY DIVISIONS get the supervisor slot
     const isDivision = sectionKey === "divisions";
     const supervisor = isDivision ? personnel[0] : null;
     const workers = isDivision ? personnel.slice(1) : personnel;
