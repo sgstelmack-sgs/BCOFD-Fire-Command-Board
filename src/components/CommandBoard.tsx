@@ -4,354 +4,263 @@ import { FireUnit, getUnitColor } from '../App';
 const normalize = (str: string) => str?.toLowerCase().replace(/[-\s]/g, "") || "";
 
 export default function CommandBoard({ incident, units, syncState }: any) {
-  // --- 1. STATE & TABS ---
   const [taskLocations, setTaskLocations] = useState<Record<string, string>>({}); 
   const [activeTab, setActiveTab] = useState<'tactical' | 'strategic'>('tactical');
+  const [activeFilters, setActiveFilters] = useState<string[]>([]);
   
   const [activeCommand, setActiveCommand] = useState([{ id: 'ic', name: 'Incident Command' }, { id: 'safety', name: 'Safety Officer' }]);
   const [activeGeneral, setActiveGeneral] = useState([{ id: 'ops-section', name: 'Operations Section' }]);
   const [activeBranches, setActiveBranches] = useState<any[]>([]);
-  
+
+  // --- 1. HIERARCHY ENGINE ---
   const sortDivisions = (divs: any[]) => {
     const getRank = (name: string) => {
       const norm = normalize(name);
       if (norm.includes("roof")) return 0;
-      if (norm.includes("floor5") || norm === "division5") return 1;
-      if (norm.includes("floor4") || norm === "division4") return 2;
-      if (norm.includes("floor3") || norm === "division3") return 3;
-      if (norm.includes("division2") || norm.includes("floor2")) return 4;
-      if (norm.includes("division1") || norm.includes("floor1")) return 5;
-      if (norm === "basement") return 6;
-      if (norm === "basement2") return 7;
-      if (norm === "basement3") return 8;
-      if (norm.includes("alpha")) return 10;
-      if (norm.includes("bravo")) return 11;
-      if (norm.includes("charlie")) return 12;
-      if (norm.includes("delta")) return 13;
-      if (norm.includes("search")) return 20;
-      if (norm.includes("rit")) return 30;
+      const floorMatch = norm.match(/(?:division|floor)(\d+)/);
+      if (floorMatch) return 20 - parseInt(floorMatch[1]);
+      if (norm.includes("division1") || norm.includes("floor1")) return 21;
+      const baseMatch = norm.match(/basement(\d+)/);
+      if (baseMatch) return 30 + parseInt(baseMatch[1]);
+      if (norm === "basement") return 30;
+      if (norm.includes("alpha")) return 50;
+      if (norm.includes("bravo")) return 51;
+      if (norm.includes("charlie")) return 52;
+      if (norm.includes("delta")) return 53;
       return 99; 
     };
     return [...divs].sort((a, b) => getRank(a.name) - getRank(b.name));
   };
 
   const [activeDivisions, setActiveDivisions] = useState(sortDivisions([
-    { id: 'group-roof', name: 'Roof Group' },
-    { id: 'div-2', name: 'Division 2' },
-    { id: 'div-1', name: 'Division 1' },
-    { id: 'div-basement', name: 'Basement' },
-    { id: 'div-a', name: 'Division Alpha' },
-    { id: 'div-c', name: 'Division Charlie' },
-    { id: 'group-search', name: 'Search and Rescue' },
-    { id: 'group-rit', name: 'RIT' }
+    { id: 'group-roof', name: 'Roof Group', side: 'left' },
+    { id: 'div-2', name: 'Division 2', side: 'left' },
+    { id: 'div-1', name: 'Division 1', side: 'left' },
+    { id: 'div-basement', name: 'Basement', side: 'left' },
+    { id: 'div-a', name: 'Division Alpha', side: 'right' },
+    { id: 'div-c', name: 'Division Charlie', side: 'right' },
+    { id: 'group-search', name: 'Search & Rescue', side: 'right' },
+    { id: 'group-rit', name: 'RIT Group', side: 'right' }
   ]));
-  
+
   const [allTasks, setAllTasks] = useState([
-    { id: 'fire-attack-1', name: 'Fire Attack 1', base: 'Fire Attack' },
-    { id: 'search-rescue-1', name: 'Search & Rescue 1', base: 'Search & Rescue' },
-    { id: 'ventilation-1', name: 'Ventilation 1', base: 'Ventilation' },
-    { id: 'water-supply-1', name: 'Water Supply 1', base: 'Water Supply' },
-    { id: 'utilities-1', name: 'Utilities 1', base: 'Utilities' },
-    { id: 'rit-task-1', name: 'RIT 1', base: 'RIT' },
+    { id: 'fa-1', name: 'Fire Attack 1', base: 'Fire Attack' },
+    { id: 'sr-1', name: 'Search 1', base: 'Search' },
+    { id: 'vent-1', name: 'Ventilation 1', base: 'Ventilation' },
+    { id: 'ws-1', name: 'Water Supply 1', base: 'Water Supply' },
+    { id: 'util-1', name: 'Utilities 1', base: 'Utilities' },
+    { id: 'rit-1', name: 'RIT Task 1', base: 'RIT' },
   ]);
 
-  const menuOptions = {
-    command: ["Public Information Officer", "Safety Officer", "Liaison Officer"],
-    general: ["Operations Section Chief", "Planning Section Chief", "Logistics Section Chief", "Finance Section Chief"],
-    branches: ["Fire Branch", "Medical Branch", "Hazmat Branch", "Rescue Branch", "RIT Branch"],
-    divisions: ["Division 3", "Division 4", "Division Bravo", "Division Delta", "Basement 2", "Basement 3", "Roof Group", "RIT"]
-  };
+  // --- 2. THE RIGID FILTER ENGINE (Fixed EMS & Ghosting) ---
+  const filteredUnits = (units || []).filter(u => {
+    const s = normalize(u.status || "");
+    const t = normalize(u.type || "");
+    const id = (u.displayId || "").toUpperCase();
+    
+    // GHOSTING PROTECTION: Unit must have an active incident status
+    const isOnCall = s.includes("route") || s.includes("arrive") || s.includes("scene") || s.includes("dispatch");
+    if (!isOnCall) return false;
+    
+    if (activeFilters.length === 0) return true;
 
-  // --- 2. TETHERED UPDATE ENGINE ---
-  const updatePersonnelAssignment = (unitId: string, memberIdx: number, newAssignment: string) => {
-    const nextUnits = units.map((u: FireUnit) => {
-      if (u.id !== unitId) return u;
-      const nextMembers = [...(u.members || [])];
-      const movedMember = nextMembers[memberIdx];
-      if (!movedMember) return u;
-      nextMembers[memberIdx] = { ...movedMember, assignment: newAssignment };
-      const roleNorm = normalize(movedMember.role);
-      const pair = u.linkedPairs?.find(p => p.some(r => roleNorm.includes(normalize(r))));
-      if (pair) {
-        const partnerRolePart = pair.find(r => !roleNorm.includes(normalize(r)));
-        const partnerIdx = nextMembers.findIndex(m => normalize(m.role).includes(normalize(partnerRolePart || "")));
-        if (partnerIdx !== -1 && (nextMembers[partnerIdx].assignment === "Unassigned" || nextMembers[partnerIdx].assignment === "STAGING")) {
-          nextMembers[partnerIdx] = { ...nextMembers[partnerIdx], assignment: newAssignment };
+    const typeFilters = activeFilters.filter(f => !["Arrived", "En Route"].includes(f));
+    const statusFilters = activeFilters.filter(f => ["Arrived", "En Route"].includes(f));
+
+    let matchesType = typeFilters.length === 0;
+    if (typeFilters.length > 0) {
+      matchesType = typeFilters.some(f => {
+        if (f === "Staff") return t.includes("chief") || id.includes("SAFE6");
+        // Fixed EMS logic: "M" prefix for Medics/Ambulances
+        if (f === "EMS") return id.startsWith("M") || id.includes("EMSDO") || id.includes("MEDIC") || t.includes("ems");
+        if (f === "Engine") return t.includes("engine") || id.startsWith("E");
+        // Fixed Truck/Tow logic: TOW323 specifically mapped here
+        if (f === "Truck") return t.includes("truck") || t.includes("tow") || t.includes("ladder") || id.startsWith("T") || id.startsWith("L");
+        if (f === "Squad") return t.includes("squad") || t.includes("rescue") || id.startsWith("SQ") || id.startsWith("R");
+        if (f === "Other") {
+          const isStandard = t.includes("engine") || id.startsWith("E") ||
+                             t.includes("truck") || t.includes("tow") || t.includes("ladder") || id.startsWith("T") || id.startsWith("L") ||
+                             t.includes("squad") || t.includes("rescue") || id.startsWith("SQ") || id.startsWith("R") ||
+                             t.includes("chief") || id.includes("SAFE6") || 
+                             id.startsWith("M") || id.includes("EMSDO") || id.includes("MEDIC");
+          return !isStandard;
         }
-      }
-      return { ...u, members: nextMembers };
-    });
-    syncState({ units: nextUnits });
-  };
-
-  const assignWholeUnit = (unitId: string, newAssignment: string) => {
-    const nextUnits = units.map((u: FireUnit) => u.id === unitId ? { ...u, members: (u.members || []).map(m => ({ ...m, assignment: newAssignment })) } : u);
-    syncState({ units: nextUnits });
-  };
-
-  // --- 3. CORE LOGIC ---
-  const getAssignmentLabel = (id: string) => {
-    if (!id || id === "Unassigned" || id === "STAGING") return null;
-    const task = allTasks.find(t => t.id === id);
-    if (task) {
-      const parentId = taskLocations[id];
-      const div = activeDivisions.find(d => d.id === parentId);
-      return div ? `${div.name} / ${task.name}` : task.name;
+        return false;
+      });
     }
-    const other = [...activeCommand, ...activeGeneral, ...activeBranches, ...activeDivisions].find(item => item.id === id);
-    return other ? other.name : null;
+
+    let matchesStatus = statusFilters.length === 0;
+    if (statusFilters.length > 0) {
+      matchesStatus = statusFilters.some(f => s.includes(normalize(f)));
+    }
+
+    return matchesType && matchesStatus;
+  });
+
+  // --- 3. DYNAMIC SPAWNING & RENAMING ---
+  const spawnNextDivision = (currentName: string, side: string) => {
+    const norm = normalize(currentName);
+    let nextName = "";
+    const floorMatch = norm.match(/(?:division|floor)(\d+)/);
+    const baseMatch = norm.match(/basement(\d+)/);
+
+    if (floorMatch) nextName = `Division ${parseInt(floorMatch[1]) + 1}`;
+    else if (norm === "division1" || norm === "floor1") nextName = "Division 2";
+    else if (baseMatch) nextName = `Basement ${parseInt(baseMatch[1]) + 1}`;
+    else if (norm === "basement") nextName = "Basement 2";
+    else if (norm.includes("alpha")) nextName = "Division Bravo";
+    else if (norm.includes("charlie")) nextName = "Division Delta";
+    
+    if (!nextName) nextName = prompt("New Division/Group Name:") || "";
+    if (activeDivisions.some(d => normalize(d.name) === normalize(nextName))) {
+        nextName = prompt("Name exists. Custom Name:", nextName) || "";
+    }
+    if (nextName) setActiveDivisions(prev => sortDivisions([...prev, { id: `id-${Date.now()}`, name: nextName, side }]));
+  };
+
+  const renameItem = (id: string, currentName: string, type: 'div' | 'task') => {
+    const newName = prompt(`Rename "${currentName}" to:`, currentName);
+    if (!newName || newName === currentName) return;
+    if (type === 'div') setActiveDivisions(prev => prev.map(d => d.id === id ? { ...d, name: newName } : d));
+    else setAllTasks(prev => prev.map(t => t.id === id ? { ...t, name: newName } : t));
   };
 
   const handleTaskDeployment = (taskId: string, newLocation: string) => {
     setTaskLocations(prev => ({ ...prev, [taskId]: newLocation }));
-    if (newLocation === "") return;
-    const deployedTask = allTasks.find(t => t.id === taskId);
-    if (deployedTask?.base) {
-      const baseTasks = allTasks.filter(t => t.base === deployedTask.base);
-      const nextNum = baseTasks.length + 1;
-      const newId = `${deployedTask.base.toLowerCase().replace(/\s+/g, '-')}-${nextNum}`;
+    if (!newLocation) return;
+    const task = allTasks.find(t => t.id === taskId);
+    if (task?.base) {
+      const count = allTasks.filter(t => t.base === task.base).length + 1;
+      const newId = `${normalize(task.base)}-${count}`;
       if (!allTasks.find(t => t.id === newId)) {
-        setAllTasks(prev => {
-          const idx = prev.findIndex(t => t.id === taskId);
-          const next = [...prev];
-          next.splice(idx + 1, 0, { id: newId, name: `${deployedTask.base} ${nextNum}`, base: deployedTask.base });
-          return next;
-        });
+        setAllTasks(prev => [...prev, { id: newId, name: `${task.base} ${count}`, base: task.base }]);
       }
     }
-  };
-
-  const spawnNextDivision = (currentName: string) => {
-    const norm = normalize(currentName);
-    let nextName = "";
-    if (norm === "division1" || norm === "floor1") nextName = "Division 2";
-    else if (norm === "division2" || norm === "floor2") nextName = "Division 3";
-    else if (norm === "division3" || norm === "floor3") nextName = "Division 4";
-    else if (norm === "basement") nextName = "Basement 2";
-    else if (norm === "basement2") nextName = "Basement 3";
-    else if (norm === "alpha" || norm === "divisionalpha") nextName = "Division Bravo";
-    else if (norm === "charlie" || norm === "divisioncharlie") nextName = "Division Delta";
-
-    const isDup = activeDivisions.some(d => normalize(d.name) === normalize(nextName));
-    if (!nextName || isDup) nextName = prompt(isDup ? `${nextName} exists. Name unit:` : "New Unit Name:") || "";
-    if (nextName) setActiveDivisions(prev => sortDivisions([...prev, { id: `id-${Date.now()}`, name: nextName }]));
-  };
-
-  const removeBucket = (id: string, section: string) => {
-    const nextUnits = (units || []).map((u: FireUnit) => ({
-      ...u,
-      members: (u.members || []).map(m => m.assignment === id ? { ...m, assignment: "Unassigned" } : m)
-    }));
-    syncState({ units: nextUnits });
-    setTaskLocations(prev => {
-      const next = { ...prev };
-      Object.keys(next).forEach(k => { if (next[k] === id) delete next[k]; });
-      return next;
-    });
-    if (section === 'command') setActiveCommand(p => p.filter(b => b.id !== id));
-    else if (section === 'general') setActiveGeneral(p => p.filter(b => b.id !== id));
-    else if (section === 'branches') setActiveBranches(p => p.filter(b => b.id !== id));
-    else if (section === 'divisions') setActiveDivisions(p => p.filter(b => b.id !== id));
   };
 
   // --- 4. RENDERERS ---
   const renderPersonnelTag = (unit: FireUnit, member: any, idx: number, context: 'staffing' | 'tactical') => {
     const color = getUnitColor(unit.type);
-    const label = getAssignmentLabel(member.assignment);
     return (
       <div key={`${unit.id}-${idx}`} draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "personnel"); e.dataTransfer.setData("data", JSON.stringify({ unitId: unit.id, idx })); }}
-        style={{ background: '#111827', margin: '2px 0', padding: '6px', borderRadius: '4px', borderLeft: `4px solid ${color}`, fontSize: '11px', display: 'flex', justifyContent: 'space-between', border: '1px solid #1f2937', color: '#f8fafc', cursor: 'grab' }}>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-           <span><strong style={{ color }}>{unit.displayId}</strong> {member.role} {member.name}</span>
-           {context === 'staffing' && label && <span style={{ fontSize: '9px', color: '#38bdf8', fontWeight: 'bold' }}>📍 {label}</span>}
-        </div>
-        {context === 'tactical' && <button onClick={() => updatePersonnelAssignment(unit.id, idx, "Unassigned")} style={{ background: '#991b1b', color: 'white', border: 'none', borderRadius: '2px', padding: '0 4px', cursor: 'pointer', height: '16px' }}>-</button>}
+        style={{ background: '#111827', margin: '1px 0', padding: '4px 6px', borderRadius: '3px', borderLeft: `3px solid ${color}`, fontSize: '10px', display: 'flex', justifyContent: 'space-between', border: '1px solid #1f2937', color: '#f8fafc', cursor: 'grab' }}>
+        <span><strong>{unit.displayId}</strong> {member.name || member.role}</span>
+        {context === 'tactical' && <button onClick={() => syncState({ units: units.map((u_m:any) => u_m.id === unit.id ? {...u_m, members: u_m.members.map((m:any, i:number) => i === idx ? {...m, assignment: "Unassigned"} : m)} : u_m)})} style={{ background: '#991b1b', color: 'white', border: 'none', borderRadius: '2px', padding: '0 3px', cursor: 'pointer' }}>-</button>}
       </div>
     );
   };
 
   const renderTaskCard = (task: any) => {
-    const assignedPersonnel = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({ u, m, idx }))).filter(item => item.m.assignment === task.id);
+    const assigned = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({ u, m, idx }))).filter(item => item.m.assignment === task.id);
     return (
-      <div key={task.id} draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "task"); e.dataTransfer.setData("taskId", task.id); }} onDragOver={(e) => e.preventDefault()}
+      <div key={task.id} onDoubleClick={() => renameItem(task.id, task.name, 'task')} draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "task"); e.dataTransfer.setData("taskId", task.id); }} onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault(); e.stopPropagation();
-          const type = e.dataTransfer.getData("type");
-          if (type === "personnel") {
+          const dT = e.dataTransfer.getData("type");
+          if (dT === "personnel") {
             const d = JSON.parse(e.dataTransfer.getData("data"));
-            updatePersonnelAssignment(d.unitId, d.idx, task.id);
-          } else if (type === "unit") {
-            assignWholeUnit(e.dataTransfer.getData("unitId"), task.id);
+            syncState({ units: units.map((un_p:any) => un_p.id === d.unitId ? {...un_p, members: un_p.members.map((m:any, i:number) => i === d.idx ? {...m, assignment: task.id} : m)} : un_p) });
+          } else if (dT === "unit") {
+            syncState({ units: units.map((un_u:any) => un_u.id === e.dataTransfer.getData("unitId") ? {...un_u, members: un_u.members.map((m:any) => ({...m, assignment: task.id}))} : un_u) });
           }
         }}
-        style={{ background: '#020617', borderRadius: '8px', padding: '10px', marginBottom: '10px', border: '1px solid #1e293b', borderLeft: '4px solid #38bdf8', minHeight: '60px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '4px', marginBottom: '6px' }}>
-          <div style={{ fontSize: '11px', fontWeight: 900, color: '#38bdf8' }}>{task.name.toUpperCase()}</div>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={(e) => { e.stopPropagation(); 
-               setAllTasks(prev => {
-                const idx = prev.findIndex(t => t.id === task.id);
-                if (idx <= 0) return prev;
-                const next = [...prev];
-                [next[idx], next[idx-1]] = [next[idx-1], next[idx]];
-                return next;
-               });
-            }} style={{ background: '#1e293b', color: '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '10px' }}>▲</button>
-            <button onClick={(e) => { e.stopPropagation(); 
-               setAllTasks(prev => {
-                const idx = prev.findIndex(t => t.id === task.id);
-                if (idx === -1 || idx === prev.length - 1) return prev;
-                const next = [...prev];
-                [next[idx], next[idx+1]] = [next[idx+1], next[idx]];
-                return next;
-               });
-            }} style={{ background: '#1e293b', color: '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '10px' }}>▼</button>
-          </div>
-        </div>
-        {assignedPersonnel.map(item => renderPersonnelTag(item.u, item.m, item.idx, 'tactical'))}
+        style={{ background: '#020617', borderRadius: '4px', padding: '6px', marginBottom: '4px', border: '1px solid #1e293b', borderLeft: '3px solid #38bdf8', cursor: 'pointer' }}>
+        <div style={{ fontSize: '9px', fontWeight: 900, color: '#38bdf8', marginBottom: '4px' }}>{task.name.toUpperCase()}</div>
+        {assigned.map(item => renderPersonnelTag(item.u, item.m, item.idx, 'tactical'))}
       </div>
     );
   };
 
   const renderBucket = (bucket: any, sectionKey: string) => {
-    const bucketPersonnel = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({ u, m, idx }))).filter(item => item.m.assignment === bucket.id);
-    const bg = sectionKey === 'divisions' ? '#334155' : sectionKey === 'branches' ? '#1e293b' : '#0f172a';
+    const personnel = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({ u, m, idx }))).filter(item => item.m.assignment === bucket.id);
     return (
       <div key={bucket.id} onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault(); e.stopPropagation();
           const dT = e.dataTransfer.getData("type");
-          if (dT === 'unit') assignWholeUnit(e.dataTransfer.getData("unitId"), bucket.id);
-          else if (dT === 'personnel') {
-            const d = JSON.parse(e.dataTransfer.getData("data"));
-            updatePersonnelAssignment(d.unitId, d.idx, bucket.id);
-          } else if (dT === 'task' && sectionKey === 'divisions') {
-            handleTaskDeployment(e.dataTransfer.getData("taskId"), bucket.id);
-          }
+          if (dT === 'unit') syncState({ units: units.map((u_b:any) => u_b.id === e.dataTransfer.getData("unitId") ? {...u_b, members: u_b.members.map((m:any) => ({...m, assignment: bucket.id}))} : u_b) });
+          else if (dT === 'personnel') { const d = JSON.parse(e.dataTransfer.getData("data")); syncState({ units: units.map((un_b:any) => un_b.id === d.unitId ? {...un_b, members: un_b.members.map((m:any, i:number) => i === d.idx ? {...m, assignment: bucket.id} : m)} : un_b) }); }
+          else if (dT === 'task') handleTaskDeployment(e.dataTransfer.getData("taskId"), bucket.id);
         }}
-        style={{ background: bg, padding: '12px', borderRadius: '8px', border: '1px solid #475569', marginTop: '12px', minHeight: '80px', position: 'relative' }}>
-        <div style={{ position: 'absolute', right: '8px', top: '8px', display: 'flex', gap: '5px' }}>
-            {sectionKey === 'divisions' && <button onClick={() => spawnNextDivision(bucket.name)} style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', cursor: 'pointer', fontWeight: 'bold' }}>+</button>}
-            <button onClick={() => removeBucket(bucket.id, sectionKey)} style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', cursor: 'pointer' }}>✕</button>
+        style={{ background: sectionKey === 'divisions' ? '#1e293b' : '#0f172a', padding: '8px', borderRadius: '4px', border: '1px solid #334155', marginBottom: '8px', minHeight: '60px', position: 'relative' }}>
+        
+        <div style={{ position: 'absolute', right: '4px', top: '4px', display: 'flex', gap: '4px' }}>
+          {sectionKey === 'divisions' && <button onClick={() => spawnNextDivision(bucket.name, bucket.side)} style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: '50%', width: '14px', height: '14px', fontSize: '10px', cursor: 'pointer' }}>+</button>}
+          <button onClick={() => {
+             const nextUnits = units.map((u: FireUnit) => ({...u, members: (u.members || []).map(m => m.assignment === bucket.id ? { ...m, assignment: "Unassigned" } : m)}));
+             syncState({ units: nextUnits });
+             if (sectionKey === 'divisions') setActiveDivisions(prev => prev.filter(d => d.id !== bucket.id));
+          }} style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '14px', height: '14px', fontSize: '8px', cursor: 'pointer' }}>✕</button>
         </div>
-        <div style={{ color: '#f1f5f9', fontSize: '11px', fontWeight: 900, marginBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>{bucket.name.toUpperCase()}</div>
-        {bucketPersonnel.length > 0 && (
-          <div style={{ marginBottom: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.1)' }}>
-            <div style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 900 }}>SUPERVISOR / COMMAND Staff</div>
-            {bucketPersonnel.map(p => renderPersonnelTag(p.u, p.m, p.idx, 'tactical'))}
-          </div>
-        )}
+
+        <div onDoubleClick={() => renameItem(bucket.id, bucket.name, 'div')} style={{ color: '#f1f5f9', fontSize: '9px', fontWeight: 900, marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingRight: '30px', cursor: 'pointer' }}>{bucket.name.toUpperCase()}</div>
+        {personnel.map(p => renderPersonnelTag(p.u, p.m, p.idx, 'tactical'))}
         {allTasks.filter(t => taskLocations[t.id] === bucket.id).map(renderTaskCard)}
       </div>
     );
   };
 
-  // --- 5. MAIN PAGE RENDER ---
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', height: '100vh', background: '#060b13', overflow: 'hidden' }}>
-      {/* COLUMN 1: STAFFING */}
-      <div style={{ background: '#0f172a', borderRight: '1px solid #1e293b', overflowY: 'auto', padding: '15px' }}>
-        <h3 style={{ color: '#38bdf8', borderBottom: '2px solid #38bdf8', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>STAFFING</h3>
-        {[...(units || [])]
-          .filter(u => {
-            const s = (u.status || "").toLowerCase();
-            return s.includes("en route") || s.includes("arrived");
-          })
-          .sort((a,b) => {
-            const aF = (a.members || []).every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
-            const bF = (b.members || []).every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
-            return (aF ? 1 : 0) - (bF ? 1 : 0);
-          }).map(u => (
-          <div key={u.id} draggable onDragStart={(e) => { e.dataTransfer.setData("type", "unit"); e.dataTransfer.setData("unitId", u.id); }}
-            style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px', cursor: 'grab', opacity: (u.members || []).every((m:any) => m.assignment !== "Unassigned") ? 0.4 : 1 }}>
-            <div style={{ fontWeight: 900, color: '#f8fafc', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>{u.displayId}</span>
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const s = (u.status || "").toLowerCase();
-                    let nextStatus = s.includes("arrived") ? "Available" : "Arrived"; 
-                    syncState({ units: units.map((unit: any) => unit.id === u.id ? { ...unit, status: nextStatus } : unit) });
-                  }}
-                  style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '4px', border: 'none', cursor: 'pointer', background: u.status?.toLowerCase().includes('arrived') ? '#991b1b' : '#854d0e', color: 'white' }}
-                >
-                  {u.status?.toLowerCase().includes('arrived') ? 'CLEAR' : 'MARK ARRIVED'}
-                </button>
-            </div>
-            {(u.members || []).map((m: any, idx: number) => renderPersonnelTag(u, m, idx, 'staffing'))}
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#060b13', overflow: 'hidden' }}>
+      {/* FILTER BAR */}
+      <div style={{ background: '#0f172a', padding: '8px 15px', display: 'flex', gap: '6px', borderBottom: '1px solid #1e293b' }}>
+        {["Engine", "Truck", "Squad", "Staff", "EMS", "Other", "Arrived", "En Route"].map(f => (
+          <button key={f} onClick={() => setActiveFilters(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f])} style={{ padding: '4px 10px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '9px', fontWeight: 900, background: activeFilters.includes(f) ? '#38bdf8' : '#1e293b', color: activeFilters.includes(f) ? '#020617' : '#94a3b8' }}>{f.toUpperCase()}</button>
         ))}
+        <button onClick={() => setActiveFilters([])} style={{ padding: '4px 10px', background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '4px', fontSize: '9px', cursor: 'pointer', marginLeft: 'auto' }}>RESET</button>
       </div>
 
-      {/* COLUMN 2: STRUCTURE (TABBED) */}
-      <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto' }}>
-        {/* ALWAYS SHOW COMMAND STAFF AT TOP */}
-        <section style={{ marginBottom: '20px' }}>
-          {renderHeader("COMMAND STAFF", "#ef4444", "command")}
-          {activeCommand.map(c => renderBucket(c, "command"))}
-        </section>
-
-        {/* TAB NAVIGATION */}
-        <div style={{ display: 'flex', background: '#1e293b', borderRadius: '8px', padding: '4px', marginBottom: '15px', border: '1px solid #334155' }}>
-          <button onClick={() => setActiveTab('tactical')} style={{ flex: 1, padding: '8px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 900, fontSize: '11px', color: 'white', background: activeTab === 'tactical' ? '#10b981' : 'transparent' }}>
-            TACTICAL (DIVISIONS)
-          </button>
-          <button onClick={() => setActiveTab('strategic')} style={{ flex: 1, padding: '8px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 900, fontSize: '11px', color: 'white', background: activeTab === 'strategic' ? '#a855f7' : 'transparent' }}>
-            STRATEGIC (GENERAL/BRANCH)
-          </button>
+      <div style={{ display: 'grid', gridTemplateColumns: '480px 1fr 220px', flex: 1, overflow: 'hidden' }}>
+        {/* APPARATUS BAY */}
+        <div style={{ background: '#0f172a', padding: '10px', overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', borderRight: '1px solid #1e293b' }}>
+          {filteredUnits.map(u => (
+            <div key={u.id} draggable onDragStart={(e) => { e.dataTransfer.setData("type", "unit"); e.dataTransfer.setData("unitId", u.id); }}
+              style={{ background: '#1e293b', borderRadius: '6px', borderLeft: `6px solid ${getUnitColor(u.type)}`, padding: '8px', height: 'fit-content' }}>
+              <div style={{ fontWeight: 900, color: '#f8fafc', fontSize: '11px', display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                <span>{u.displayId}</span>
+                <button onClick={() => syncState({ units: units.map((un:any) => un.id === u.id ? {...un, status: normalize(un.status).includes('arrive') ? 'Available' : 'Arrived'} : un) })}
+                  style={{ fontSize: '8px', padding: '2px 5px', borderRadius: '3px', background: normalize(u.status).includes('arrive') ? '#991b1b' : '#854d0e', color: 'white', border: 'none' }}>{normalize(u.status).includes('arrive') ? 'CLEAR' : 'ARRIVE'}</button>
+              </div>
+              {(u.members || []).map((m: any, idx: number) => renderPersonnelTag(u, m, idx, 'staffing'))}
+            </div>
+          ))}
         </div>
 
-        {activeTab === 'tactical' ? (
-          <section>
-            {renderHeader("DIVISIONS / GROUPS", "#10b981", "divisions")}
-            {sortDivisions(activeDivisions).map(d => renderBucket(d, "divisions"))}
+        {/* STRUCTURE COLUMN */}
+        <div style={{ padding: '10px', overflowY: 'auto', borderRight: '1px solid #1e293b' }}>
+          <section style={{ marginBottom: '15px' }}>
+             <div style={{ color: '#ef4444', fontSize: '10px', fontWeight: 900, borderBottom: '1px solid #ef4444', marginBottom: '8px' }}>COMMAND STAFF</div>
+             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>{activeCommand.map(c => renderBucket(c, "command"))}</div>
           </section>
-        ) : (
-          <>
-            <section style={{ marginBottom: '30px' }}>
-              {renderHeader("GENERAL STAFF", "#f97316", "general")}
-              {activeGeneral.map(g => renderBucket(g, "general"))}
-            </section>
-            <section>
-              {renderHeader("BRANCHES", "#a855f7", "branches")}
-              {activeBranches.map(b => renderBucket(b, "branches"))}
-            </section>
-          </>
-        )}
-      </div>
 
-      {/* COLUMN 3: TASKS */}
-      <div style={{ padding: '15px', overflowY: 'auto' }}>
-        <h3 style={{ color: '#facc15', borderBottom: '2px solid #facc15', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>AVAILABLE TASKS</h3>
-        <div onDragOver={e => e.preventDefault()} onDrop={e => {
-            const tId = e.dataTransfer.getData("taskId");
-            if (tId) handleTaskDeployment(tId, "");
-        }} style={{ minHeight: '100%' }}>
-          {allTasks.filter(t => !taskLocations[t.id]).map(renderTaskCard)}
+          <div style={{ display: 'flex', background: '#1e293b', padding: '2px', borderRadius: '4px', marginBottom: '10px' }}>
+            <button onClick={() => setActiveTab('tactical')} style={{ flex: 1, fontSize: '10px', padding: '6px', border: 'none', borderRadius: '3px', color: 'white', background: activeTab === 'tactical' ? '#10b981' : 'transparent' }}>TACTICAL</button>
+            <button onClick={() => setActiveTab('strategic')} style={{ flex: 1, fontSize: '10px', padding: '6px', border: 'none', borderRadius: '3px', color: 'white', background: activeTab === 'strategic' ? '#a855f7' : 'transparent' }}>STRATEGIC</button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+            {activeTab === 'tactical' ? (
+              <>
+                <div>{sortDivisions(activeDivisions).filter(d => d.side === 'left').map(d => renderBucket(d, 'divisions'))}</div>
+                <div>{sortDivisions(activeDivisions).filter(d => d.side === 'right').map(d => renderBucket(d, 'divisions'))}</div>
+              </>
+            ) : (
+              <>
+                <div>{activeGeneral.map(g => renderBucket(g, 'general'))}</div>
+                <div>{activeBranches.map(b => renderBucket(b, 'branches'))}</div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* TASK POOL */}
+        <div style={{ padding: '10px', background: '#020617', overflowY: 'auto' }}>
+           <div style={{ color: '#facc15', fontSize: '10px', fontWeight: 900, borderBottom: '1px solid #facc15', marginBottom: '10px' }}>AVAILABLE TASKS</div>
+           <div onDragOver={e => e.preventDefault()} onDrop={e => { const tId = e.dataTransfer.getData("taskId"); if (tId) setTaskLocations(p => { const n = {...p}; delete n[tId]; return n; }); }} style={{ minHeight: '100%' }}>
+             {allTasks.filter(t => !taskLocations[t.id]).map(renderTaskCard)}
+           </div>
         </div>
       </div>
     </div>
   );
-
-  function renderHeader(title: string, color: string, key: string) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `2px solid ${color}`, marginBottom: '10px' }}>
-        <h3 style={{ color, fontSize: '13px', fontWeight: 900 }}>{title}</h3>
-        <select onChange={(e) => {
-          const val = e.target.value; if(!val) return;
-          const name = val === "CUSTOM" ? prompt("Name:") : val; if(!name) return;
-          const nB = { id: `id-${Date.now()}`, name };
-          if(key === 'command') setActiveCommand(p => [...p, nB]);
-          else if(key === 'general') setActiveGeneral(p => [...p, nB]);
-          else if(key === 'branches') setActiveBranches(p => [...p, nB]);
-          else if(key === 'divisions') setActiveDivisions(p => sortDivisions([...p, nB]));
-          e.target.value = "";
-        }} style={{ background: 'transparent', color, border: 'none', fontWeight: 'bold' }} value="">
-          <option value="">+</option>
-          <option value="CUSTOM">Blank</option>
-          {(menuOptions as any)[key]?.map((opt:string) => <option key={opt} value={opt}>{opt}</option>)}
-        </select>
-      </div>
-    );
-  }
 }
