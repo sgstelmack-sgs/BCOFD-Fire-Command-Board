@@ -60,9 +60,9 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     divisions: ["Division 3", "Division 4", "Division Bravo", "Division Delta", "Basement 2", "Basement 3", "Roof Group", "RIT"]
   };
 
-  // --- 3. LOGIC ENGINES ---
+  // --- 3. CORE LOGIC ENGINES ---
   const getAssignmentLabel = (id: string) => {
-    if (id === "Unassigned") return null;
+    if (!id || id === "Unassigned" || id === "STAGING") return null;
     const task = allTasks.find(t => t.id === id);
     if (task) {
       const parentId = taskLocations[id];
@@ -106,17 +106,6 @@ export default function CommandBoard({ incident, units, syncState }: any) {
     else if (section === 'divisions') setActiveDivisions(p => p.filter(b => b.id !== id));
   };
 
-  const moveTask = (taskId: string, direction: 'up' | 'down') => {
-    setAllTasks(prev => {
-      const idx = prev.findIndex(t => t.id === taskId);
-      if (idx === -1 || (direction === 'up' && idx === 0) || (direction === 'down' && idx === prev.length - 1)) return prev;
-      const next = [...prev];
-      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
-      return next;
-    });
-  };
-
   // --- 4. RENDERERS ---
   const renderPersonnelTag = (unit: FireUnit, member: any, idx: number, context: 'staffing' | 'tactical') => {
     const color = getUnitColor(unit.type);
@@ -125,19 +114,22 @@ export default function CommandBoard({ incident, units, syncState }: any) {
       <div key={`${unit.id}-${idx}`} draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "personnel"); e.dataTransfer.setData("data", JSON.stringify({ unitId: unit.id, idx })); }}
         style={{ background: '#111827', margin: '2px 0', padding: '6px', borderRadius: '4px', borderLeft: `4px solid ${color}`, fontSize: '11px', display: 'flex', justifyContent: 'space-between', border: '1px solid #1f2937', color: '#f8fafc', cursor: 'grab' }}>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-           <span><strong>{unit.displayId}</strong> {member.role}</span>
+           <span><strong style={{ color }}>{unit.displayId}</strong> {member.role} {member.name}</span>
            {context === 'staffing' && label && <span style={{ fontSize: '9px', color: '#38bdf8', fontWeight: 'bold' }}>📍 {label}</span>}
         </div>
         {context === 'tactical' && <button onClick={() => {
             const nextUnits = units.map((u:any) => u.id === unit.id ? {...u, members: u.members.map((m:any, i:number) => i === idx ? {...m, assignment: "Unassigned"} : m)} : u);
             syncState({ units: nextUnits });
-        }} style={{ background: '#991b1b', color: 'white', border: 'none', borderRadius: '2px', padding: '0 4px', cursor: 'pointer' }}>-</button>}
+        }} style={{ background: '#991b1b', color: 'white', border: 'none', borderRadius: '2px', padding: '0 4px', cursor: 'pointer', height: '16px' }}>-</button>}
       </div>
     );
   };
 
   const renderTaskCard = (task: any) => {
-    const assigned = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({u, m, idx}))).filter(item => item.m.assignment === task.id);
+    const assignedPersonnel = (units || []).flatMap((u: FireUnit) => 
+      (u.members || []).map((m, idx) => ({ u, m, idx }))
+    ).filter(item => item.m.assignment === task.id);
+
     return (
       <div key={task.id} draggable onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("type", "task"); e.dataTransfer.setData("taskId", task.id); }} onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
@@ -157,17 +149,36 @@ export default function CommandBoard({ incident, units, syncState }: any) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '4px', marginBottom: '6px' }}>
           <div style={{ fontSize: '11px', fontWeight: 900, color: '#38bdf8' }}>{task.name.toUpperCase()}</div>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={(e) => { e.stopPropagation(); moveTask(task.id, 'up'); }} style={{ background: '#1e293b', color: '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '10px' }}>▲</button>
-            <button onClick={(e) => { e.stopPropagation(); moveTask(task.id, 'down'); }} style={{ background: '#1e293b', color: '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '10px' }}>▼</button>
+            <button onClick={(e) => { e.stopPropagation(); 
+               setAllTasks(prev => {
+                const idx = prev.findIndex(t => t.id === task.id);
+                if (idx <= 0) return prev;
+                const next = [...prev];
+                [next[idx], next[idx-1]] = [next[idx-1], next[idx]];
+                return next;
+               });
+            }} style={{ background: '#1e293b', color: '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '10px' }}>▲</button>
+            <button onClick={(e) => { e.stopPropagation(); 
+               setAllTasks(prev => {
+                const idx = prev.findIndex(t => t.id === task.id);
+                if (idx === -1 || idx === prev.length - 1) return prev;
+                const next = [...prev];
+                [next[idx], next[idx+1]] = [next[idx+1], next[idx]];
+                return next;
+               });
+            }} style={{ background: '#1e293b', color: '#94a3b8', border: 'none', cursor: 'pointer', fontSize: '10px' }}>▼</button>
           </div>
         </div>
-        {assigned.map(item => renderPersonnelTag(item.u, item.m, item.idx, 'tactical'))}
+        {assignedPersonnel.map(item => renderPersonnelTag(item.u, item.m, item.idx, 'tactical'))}
       </div>
     );
   };
 
   const renderBucket = (bucket: any, sectionKey: string) => {
-    const sups = (units || []).flatMap((u: FireUnit) => (u.members || []).map((m, idx) => ({u, m, idx}))).filter(item => item.m.assignment === bucket.id);
+    const bucketPersonnel = (units || []).flatMap((u: FireUnit) => 
+      (u.members || []).map((m, idx) => ({ u, m, idx }))
+    ).filter(item => item.m.assignment === bucket.id);
+
     const bg = sectionKey === 'divisions' ? '#334155' : sectionKey === 'branches' ? '#1e293b' : '#0f172a';
 
     return (
@@ -195,10 +206,11 @@ export default function CommandBoard({ incident, units, syncState }: any) {
         </div>
 
         <div style={{ color: '#f1f5f9', fontSize: '11px', fontWeight: 900, marginBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>{bucket.name.toUpperCase()}</div>
-        {sups.length > 0 && (
+        
+        {bucketPersonnel.length > 0 && (
           <div style={{ marginBottom: '10px', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '4px', border: '1px dashed rgba(255,255,255,0.1)' }}>
             <div style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 900 }}>SUPERVISOR / COMMAND</div>
-            {sups.map(p => renderPersonnelTag(p.u, p.m, p.idx, 'tactical'))}
+            {bucketPersonnel.map(p => renderPersonnelTag(p.u, p.m, p.idx, 'tactical'))}
           </div>
         )}
         {allTasks.filter(t => taskLocations[t.id] === bucket.id).map(renderTaskCard)}
@@ -209,31 +221,28 @@ export default function CommandBoard({ incident, units, syncState }: any) {
   // --- 5. MAIN PAGE RENDER ---
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 1fr', height: '100vh', background: '#060b13', overflow: 'hidden' }}>
-      {/* COLUMN 1: STAFFING */}
       <div style={{ background: '#0f172a', borderRight: '1px solid #1e293b', overflowY: 'auto', padding: '15px' }}>
         <h3 style={{ color: '#38bdf8', borderBottom: '2px solid #38bdf8', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>STAFFING</h3>
         {[...(units || [])].sort((a,b) => {
-            const aF = a.members.every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
-            const bF = b.members.every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
+            const aF = (a.members || []).every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
+            const bF = (b.members || []).every((m:any) => m.assignment !== "Unassigned" && m.assignment !== "STAGING");
             return (aF ? 1 : 0) - (bF ? 1 : 0);
         }).map(u => (
           <div key={u.id} draggable onDragStart={(e) => { e.dataTransfer.setData("type", "unit"); e.dataTransfer.setData("unitId", u.id); }}
-            style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px', opacity: u.members.every((m:any) => m.assignment !== "Unassigned") ? 0.4 : 1 }}>
+            style={{ marginBottom: '15px', background: '#1e293b', borderRadius: '8px', borderLeft: `8px solid ${getUnitColor(u.type)}`, padding: '10px', opacity: (u.members || []).every((m:any) => m.assignment !== "Unassigned") ? 0.4 : 1 }}>
             <div style={{ fontWeight: 900, color: '#f8fafc', fontSize: '12px' }}>{u.displayId}</div>
-            {u.members?.map((m: any, idx: number) => renderPersonnelTag(u, m, idx, 'staffing'))}
+            {(u.members || []).map((m: any, idx: number) => renderPersonnelTag(u, m, idx, 'staffing'))}
           </div>
         ))}
       </div>
 
-      {/* COLUMN 2: STRUCTURE */}
       <div style={{ borderRight: '1px solid #1e293b', padding: '15px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '30px' }}>
-        <section>{renderHeader("COMMAND", "#ef4444", "command")}{activeCommand.map(c => renderBucket(c, "command"))}</section>
+        <section>{renderHeader("COMMAND STAFF", "#ef4444", "command")}{activeCommand.map(c => renderBucket(c, "command"))}</section>
         <section>{renderHeader("GENERAL STAFF", "#f97316", "general")}{activeGeneral.map(g => renderBucket(g, "general"))}</section>
         <section>{renderHeader("BRANCHES", "#a855f7", "branches")}{activeBranches.map(b => renderBucket(b, "branches"))}</section>
         <section>{renderHeader("DIVISIONS", "#10b981", "divisions")}{sortDivisions(activeDivisions).map(d => renderBucket(d, "divisions"))}</section>
       </div>
 
-      {/* COLUMN 3: TASKS */}
       <div style={{ padding: '15px', overflowY: 'auto' }}>
         <h3 style={{ color: '#facc15', borderBottom: '2px solid #facc15', paddingBottom: '10px', fontSize: '14px', fontWeight: 900 }}>AVAILABLE TASKS</h3>
         <div onDragOver={e => e.preventDefault()} onDrop={e => {
