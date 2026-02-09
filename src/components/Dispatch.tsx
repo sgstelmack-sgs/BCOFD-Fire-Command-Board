@@ -20,13 +20,21 @@ export default function Dispatch({ incident, units, syncState }) {
     fetchStaff();
   }, []);
 
+  // Filter logic based on your requirements:
+  // Active units are those already alerted/involved in the incident (Dispatched, Enroute, Arrived)
+  // Ghosted units remain "Available" until specifically acted upon
   const activeUnits = units.filter((u) => !u.isGhosted);
-  const ghostedUnits = units.filter((u) => u.isGhosted);
+  const availableUnits = units.filter((u) => u.isGhosted);
 
   const updateStatus = (unitId, status) => {
-    const nextUnits = units.map((u) =>
-      u.id === unitId ? { ...u, status, isGhosted: false } : u
-    );
+    const nextUnits = units.map((u) => {
+      if (u.id === unitId) {
+        // If moving from ghosted/available to a response state, unghost them
+        const isNowActive = status === "enroute" || status === "arrived" || status === "dispatched";
+        return { ...u, status, isGhosted: !isNowActive };
+      }
+      return u;
+    });
     syncState({ units: nextUnits });
   };
 
@@ -51,6 +59,7 @@ export default function Dispatch({ incident, units, syncState }) {
   const renderUnitCard = (unit) => {
     const isExpanded = expandedUnits.includes(unit.id);
     const unitColor = getUnitColor(unit.type);
+    const statusLabel = unit.status?.toUpperCase() || "AVAILABLE";
 
     return (
       <div
@@ -88,14 +97,15 @@ export default function Dispatch({ incident, units, syncState }) {
               <span
                 style={{ fontSize: "26px", fontWeight: 900, color: "#f8fafc" }}
               >
-                {unit.displayId} {unit.isGhosted && "👻"}
+                {unit.displayId}
               </span>
             </div>
-            <span
-              style={{ fontSize: "11px", fontWeight: "bold", color: unitColor }}
-            >
-              {unit.type}
-            </span>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "10px", fontWeight: 900, color: "#94a3b8" }}>{statusLabel}</div>
+              <span style={{ fontSize: "11px", fontWeight: "bold", color: unitColor }}>
+                {unit.type}
+              </span>
+            </div>
           </div>
 
           {isExpanded && (
@@ -153,9 +163,7 @@ export default function Dispatch({ incident, units, syncState }) {
                           autoFocus
                           value={searchTerm}
                           onChange={(e) => setSearchTerm(e.target.value)}
-                          onBlur={() =>
-                            setTimeout(() => setEditingMember(null), 200)
-                          }
+                          onBlur={() => setTimeout(() => setEditingMember(null), 200)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter")
                               handleNameChange(unit.id, i, searchTerm);
@@ -171,7 +179,6 @@ export default function Dispatch({ incident, units, syncState }) {
                             outline: "none",
                           }}
                         />
-                        {/* Dropdown Suggestions */}
                         <div
                           style={{
                             position: "absolute",
@@ -205,14 +212,11 @@ export default function Dispatch({ incident, units, syncState }) {
                                 (e.currentTarget.style.background = "#334155")
                               }
                               onMouseLeave={(e) =>
-                                (e.currentTarget.style.background =
-                                  "transparent")
+                                (e.currentTarget.style.background = "transparent")
                               }
                             >
                               <span>{person.name}</span>
-                              <span
-                                style={{ color: "#38bdf8", fontSize: "9px" }}
-                              >
+                              <span style={{ color: "#38bdf8", fontSize: "9px" }}>
                                 {person.rank}
                               </span>
                             </div>
@@ -365,9 +369,7 @@ export default function Dispatch({ incident, units, syncState }) {
           </p>
         </div>
       </div>
-      <div
-        style={{ padding: "20px", background: "#0f172a", overflowY: "auto" }}
-      >
+      <div style={{ padding: "20px", background: "#0f172a", overflowY: "auto" }}>
         <h3
           style={{
             borderBottom: "2px solid #1e293b",
@@ -379,7 +381,7 @@ export default function Dispatch({ incident, units, syncState }) {
           ACTIVE ASSETS
         </h3>
         {activeUnits.map(renderUnitCard)}
-        {ghostedUnits.length > 0 && (
+        {availableUnits.length > 0 && (
           <h3
             style={{
               borderBottom: "2px solid #1e293b",
@@ -389,10 +391,10 @@ export default function Dispatch({ incident, units, syncState }) {
               marginTop: "30px",
             }}
           >
-            GHOSTED
+            AVAILABLE (GHOSTED)
           </h3>
         )}
-        {ghostedUnits.map(renderUnitCard)}
+        {availableUnits.map(renderUnitCard)}
       </div>
     </div>
   );

@@ -231,6 +231,26 @@ export default function CommandBoard({ units, syncState }: any) {
     }
   };
 
+  const moveTask = (
+    taskId: string,
+    bucketId: string,
+    direction: "up" | "down"
+  ) => {
+    setTaskLocations((prev) => {
+      const bucketTasks = [...(prev[bucketId] || [])];
+      const index = bucketTasks.indexOf(taskId);
+      if (index === -1) return prev;
+      const newIndex = direction === "up" ? index - 1 : index + 1;
+      if (newIndex < 0 || newIndex >= bucketTasks.length) return prev;
+      const nextTasks = [...bucketTasks];
+      [nextTasks[index], nextTasks[newIndex]] = [
+        nextTasks[newIndex],
+        nextTasks[index],
+      ];
+      return { ...prev, [bucketId]: nextTasks };
+    });
+  };
+
   // --- 4. RENDERERS ---
   const renderPersonnelTag = (
     unit: any,
@@ -658,6 +678,80 @@ export default function CommandBoard({ units, syncState }: any) {
     );
   };
 
+  // --- APPARATUS BAY COMPONENT ---
+  const renderApparatusCard = (u: any) => (
+    <div
+      key={u.id}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("type", "unit");
+        e.dataTransfer.setData("unitId", u.id);
+      }}
+      style={{
+        background: "#1e293b",
+        borderRadius: "6px",
+        borderLeft: `6px solid ${getUnitColor(u.type)}`,
+        padding: "8px",
+        height: "fit-content",
+        marginBottom: "8px",
+      }}
+    >
+      <div
+        style={{
+          fontWeight: 900,
+          color: "#f8fafc",
+          fontSize: "11px",
+          display: "flex",
+          justifyContent: "space-between",
+          marginBottom: "5px",
+        }}
+      >
+        <span>{u.displayId}</span>
+        <div style={{ display: "flex", gap: "4px" }}>
+          <button
+            onClick={() =>
+              syncState({
+                units: units.map((un: any) =>
+                  un.id === u.id
+                    ? {
+                        ...un,
+                        status: normalize(un.status).includes("arrive")
+                          ? "Available"
+                          : "Arrived",
+                      }
+                    : un
+                ),
+              })
+            }
+            style={{
+              fontSize: "8px",
+              padding: "2px 5px",
+              borderRadius: "3px",
+              background: normalize(u.status).includes("arrive")
+                ? "#991b1b"
+                : "#854d0e",
+              color: "white",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            {normalize(u.status).includes("arrive") ? "CLEAR" : "ARRIVE"}
+          </button>
+        </div>
+      </div>
+      {(u.members || []).map((m: any, idx: number) =>
+        renderPersonnelTag(u, m, idx, "staffing")
+      )}
+    </div>
+  );
+
+  // Categorization
+  const arrivedUnits = units?.filter((u: any) => normalize(u.status).includes("arrive")) || [];
+  const enrouteUnits = units?.filter((u: any) => 
+    !normalize(u.status).includes("arrive") && 
+    (normalize(u.status).includes("route") || normalize(u.status).includes("dispatch"))
+  ) || [];
+
   return (
     <div
       style={{
@@ -731,91 +825,22 @@ export default function CommandBoard({ units, syncState }: any) {
             background: "#0f172a",
             padding: "10px",
             overflowY: "auto",
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "10px",
             borderRight: "1px solid #1e293b",
           }}
         >
-          {units
-            .filter((u) => {
-              if (activeFilters.length === 0) return true;
-              return activeFilters.some((f) => {
-                if (f === "Engine") return normalize(u.type).includes("engine");
-                if (f === "Truck")
-                  return (
-                    normalize(u.type).includes("truck") ||
-                    normalize(u.type).includes("tower")
-                  );
-                if (f === "Arrived")
-                  return normalize(u.status).includes("arrive");
-                return true;
-              });
-            })
-            .map((u: any) => (
-              <div
-                key={u.id}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData("type", "unit");
-                  e.dataTransfer.setData("unitId", u.id);
-                }}
-                style={{
-                  background: "#1e293b",
-                  borderRadius: "6px",
-                  borderLeft: `6px solid ${getUnitColor(u.type)}`,
-                  padding: "8px",
-                  height: "fit-content",
-                }}
-              >
-                <div
-                  style={{
-                    fontWeight: 900,
-                    color: "#f8fafc",
-                    fontSize: "11px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginBottom: "5px",
-                  }}
-                >
-                  <span>{u.displayId}</span>
-                  <button
-                    onClick={() =>
-                      syncState({
-                        units: units.map((un: any) =>
-                          un.id === u.id
-                            ? {
-                                ...un,
-                                status: normalize(un.status).includes("arrive")
-                                  ? "Available"
-                                  : "Arrived",
-                              }
-                            : un
-                        ),
-                      })
-                    }
-                    style={{
-                      fontSize: "8px",
-                      padding: "2px 5px",
-                      borderRadius: "3px",
-                      background: normalize(u.status).includes("arrive")
-                        ? "#991b1b"
-                        : "#854d0e",
-                      color: "white",
-                      border: "none",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {normalize(u.status).includes("arrive")
-                      ? "CLEAR"
-                      : "ARRIVE"}
-                  </button>
-                </div>
-                {(u.members || []).map((m: any, idx: number) =>
-                  renderPersonnelTag(u, m, idx, "staffing")
-                )}
-              </div>
-            ))}
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ color: "#38bdf8", fontSize: "10px", fontWeight: 900, borderBottom: "1px solid #38bdf8", marginBottom: "10px", paddingBottom: "2px" }}>ARRIVED</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+              {arrivedUnits.map(renderApparatusCard)}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ color: "#94a3b8", fontSize: "10px", fontWeight: 900, borderBottom: "1px solid #334155", marginBottom: "10px", paddingBottom: "2px" }}>ENROUTE</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+              {enrouteUnits.map(renderApparatusCard)}
+            </div>
+          </div>
         </div>
 
         {/* Tactical Center */}
