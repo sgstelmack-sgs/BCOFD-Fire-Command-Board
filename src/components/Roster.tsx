@@ -4,6 +4,8 @@ import { getUnitColor } from "../App";
 
 export default function Roster() {
   const [hierarchy, setHierarchy] = useState<any>({});
+  const [staff, setStaff] = useState<any[]>([]); // New: Staff table data
+  const [searchTerm, setSearchTerm] = useState(""); // New: Search string
   const [expandedBN, setExpandedBN] = useState<string[]>([]);
   const [expandedType, setExpandedType] = useState<string[]>([]);
   const [expandedST, setExpandedST] = useState<string[]>([]);
@@ -34,7 +36,16 @@ export default function Roster() {
 
   useEffect(() => {
     fetchRosters();
+    fetchStaff(); // Fetch staff for autocomplete
   }, []);
+
+  const fetchStaff = async () => {
+    const { data } = await supabase
+      .from("staff")
+      .select("name, rank, id")
+      .order("name");
+    if (data) setStaff(data);
+  };
 
   const fetchRosters = async () => {
     setLoading(true);
@@ -127,7 +138,6 @@ export default function Roster() {
         nested[bn][typeKey][st].push({ ...u, currentMembers });
       });
 
-      // TACTICAL + NUMERIC SORTING
       for (let bn in nested) {
         for (let type in nested[bn]) {
           for (let st in nested[bn][type]) {
@@ -146,28 +156,6 @@ export default function Roster() {
       setHierarchy(nested);
     }
     setLoading(false);
-  };
-
-  const deployNewUnit = (bn: string, type: string, st: string) => {
-    const unitId = window.prompt("Enter Unit ID (e.g. E472):");
-    if (!unitId) return;
-    const newUnit = {
-      id: unitId.toUpperCase(),
-      station_id: st,
-      battalion_id: bn,
-      is_career: type === "Career",
-      type: "ENGINE",
-      currentMembers: [
-        { role: "Officer", name: "" },
-        { role: "Driver", name: "" },
-        { role: "Nozzle", name: "" },
-        { role: "Backup", name: "" },
-      ],
-    };
-    const next = { ...hierarchy };
-    next[bn][type][st].push(newUnit);
-    setHierarchy(next);
-    setDirtyUnits([...dirtyUnits, newUnit.id]);
   };
 
   const handleMemberChange = (
@@ -196,6 +184,7 @@ export default function Roster() {
     setHierarchy(next);
     if (!dirtyUnits.includes(unitId)) setDirtyUnits([...dirtyUnits, unitId]);
     setEditing(null);
+    setSearchTerm("");
   };
 
   const saveUnit = async (unitId: string) => {
@@ -218,6 +207,10 @@ export default function Roster() {
       setDirtyUnits(dirtyUnits.filter((id) => id !== unitId));
     }
   };
+
+  const filteredStaff = staff
+    .filter((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    .slice(0, 8);
 
   if (loading)
     return (
@@ -321,6 +314,7 @@ export default function Roster() {
                             .map((st) => {
                               const stKey = `${typeKey}-${st}`;
                               const isStExp = expandedST.includes(stKey);
+
                               return (
                                 <div
                                   key={st}
@@ -385,7 +379,6 @@ export default function Roster() {
                                               borderLeft: `10px solid ${getUnitColor(
                                                 unit.type
                                               )}`,
-                                              overflow: "hidden",
                                             }}
                                           >
                                             <div
@@ -406,7 +399,9 @@ export default function Roster() {
                                             </div>
                                             {unit.currentMembers.map(
                                               (m: any, idx: number) => {
-                                                const defaultName = `${unit.id} ${m.role}`;
+                                                const isEditing =
+                                                  editing?.unitId === unit.id &&
+                                                  editing?.role === m.role;
                                                 return (
                                                   <div
                                                     key={idx}
@@ -416,6 +411,7 @@ export default function Roster() {
                                                       justifyContent:
                                                         "space-between",
                                                       marginBottom: "4px",
+                                                      position: "relative",
                                                     }}
                                                   >
                                                     <span
@@ -428,53 +424,17 @@ export default function Roster() {
                                                     >
                                                       {m.role}
                                                     </span>
-                                                    {editing?.unitId ===
-                                                      unit.id &&
-                                                    editing?.role === m.role ? (
-                                                      <input
-                                                        autoFocus
-                                                        defaultValue={m.name}
-                                                        placeholder={
-                                                          defaultName
-                                                        }
-                                                        onBlur={(e) =>
-                                                          handleMemberChange(
-                                                            unit.id,
-                                                            m.role,
-                                                            e.target.value
-                                                          )
-                                                        }
-                                                        onKeyDown={(e) => {
-                                                          if (e.key === "Enter")
-                                                            handleMemberChange(
-                                                              unit.id,
-                                                              m.role,
-                                                              (
-                                                                e.target as HTMLInputElement
-                                                              ).value
-                                                            );
-                                                          if (
-                                                            e.key === "Escape"
-                                                          )
-                                                            setEditing(null);
-                                                        }}
-                                                        style={{
-                                                          background: "#1e293b",
-                                                          color: "white",
-                                                          width: "120px",
-                                                          border:
-                                                            "1px solid #38bdf8",
-                                                          padding: "0 4px",
-                                                        }}
-                                                      />
-                                                    ) : (
+
+                                                    {!isEditing ? (
                                                       <span
-                                                        onClick={(e) => {
-                                                          e.stopPropagation();
+                                                        onClick={() => {
                                                           setEditing({
                                                             unitId: unit.id,
                                                             role: m.role,
                                                           });
+                                                          setSearchTerm(
+                                                            m.name || ""
+                                                          );
                                                         }}
                                                         style={{
                                                           cursor: "pointer",
@@ -483,8 +443,131 @@ export default function Roster() {
                                                             : "#475569",
                                                         }}
                                                       >
-                                                        {m.name || defaultName}
+                                                        {m.name ||
+                                                          `${unit.id} ${m.role}`}
                                                       </span>
+                                                    ) : (
+                                                      <div
+                                                        style={{
+                                                          position: "relative",
+                                                        }}
+                                                      >
+                                                        <input
+                                                          autoFocus
+                                                          placeholder="Search..."
+                                                          value={searchTerm}
+                                                          onChange={(e) =>
+                                                            setSearchTerm(
+                                                              e.target.value
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key ===
+                                                              "Escape" &&
+                                                            setEditing(null)
+                                                          }
+                                                          onBlur={() =>
+                                                            setTimeout(
+                                                              () =>
+                                                                setEditing(
+                                                                  null
+                                                                ),
+                                                              200
+                                                            )
+                                                          }
+                                                          style={{
+                                                            background:
+                                                              "#1e293b",
+                                                            color: "white",
+                                                            width: "140px",
+                                                            border:
+                                                              "1px solid #38bdf8",
+                                                            padding: "0 4px",
+                                                          }}
+                                                        />
+                                                        {searchTerm && (
+                                                          <div
+                                                            style={{
+                                                              position:
+                                                                "absolute",
+                                                              top: "100%",
+                                                              right: 0,
+                                                              width: "200px",
+                                                              background:
+                                                                "#1e293b",
+                                                              zIndex: 100,
+                                                              border:
+                                                                "1px solid #334155",
+                                                              borderRadius:
+                                                                "4px",
+                                                              boxShadow:
+                                                                "0 4px 6px rgba(0,0,0,0.3)",
+                                                            }}
+                                                          >
+                                                            {filteredStaff.map(
+                                                              (s) => (
+                                                                <div
+                                                                  key={s.id}
+                                                                  onMouseDown={() =>
+                                                                    handleMemberChange(
+                                                                      unit.id,
+                                                                      m.role,
+                                                                      s.name
+                                                                    )
+                                                                  }
+                                                                  style={{
+                                                                    padding:
+                                                                      "6px",
+                                                                    cursor:
+                                                                      "pointer",
+                                                                    borderBottom:
+                                                                      "1px solid #0f172a",
+                                                                    fontSize:
+                                                                      "10px",
+                                                                  }}
+                                                                  onMouseEnter={(
+                                                                    e
+                                                                  ) =>
+                                                                    (e.currentTarget.style.background =
+                                                                      "#334155")
+                                                                  }
+                                                                  onMouseLeave={(
+                                                                    e
+                                                                  ) =>
+                                                                    (e.currentTarget.style.background =
+                                                                      "transparent")
+                                                                  }
+                                                                >
+                                                                  {s.rank}{" "}
+                                                                  {s.name}
+                                                                </div>
+                                                              )
+                                                            )}
+                                                            <div
+                                                              onMouseDown={() =>
+                                                                handleMemberChange(
+                                                                  unit.id,
+                                                                  m.role,
+                                                                  searchTerm
+                                                                )
+                                                              }
+                                                              style={{
+                                                                padding: "6px",
+                                                                color:
+                                                                  "#38bdf8",
+                                                                fontSize: "9px",
+                                                                fontStyle:
+                                                                  "italic",
+                                                                cursor:
+                                                                  "pointer",
+                                                              }}
+                                                            >
+                                                              Use Custom: "
+                                                              {searchTerm}"
+                                                            </div>
+                                                          </div>
+                                                        )}
+                                                      </div>
                                                     )}
                                                   </div>
                                                 );
@@ -492,10 +575,9 @@ export default function Roster() {
                                             )}
                                             {dirtyUnits.includes(unit.id) && (
                                               <button
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  saveUnit(unit.id);
-                                                }}
+                                                onClick={() =>
+                                                  saveUnit(unit.id)
+                                                }
                                                 style={{
                                                   width: "100%",
                                                   background: "#facc15",
