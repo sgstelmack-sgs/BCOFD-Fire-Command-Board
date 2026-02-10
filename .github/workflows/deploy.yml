@@ -20,16 +20,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm install
-
-        - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          # We removed the 'cache' line so it doesn't look for a lockfile
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
